@@ -1,179 +1,163 @@
 #include "Shell.hpp"
-#include "core/TileText.hpp"
-
-#include <memory>
-#include <glibmm/main.h>
 #include "AboutWindow.hpp"
 #include "ShortcutsDialog.hpp"
 #include "Log.hpp"
-#include "Registry.hpp"
+#include "core/FileKind.hpp"
 #include "core/Recents.hpp"
+#include "core/TileText.hpp"
 
-#include <gtkmm/filedialog.h>
-#include <giomm/asyncresult.h>
 #include <giomm/file.h>
+#include <giomm/liststore.h>
+#include <glibmm/convert.h>
+#include <glibmm/main.h>
+#include <glibmm/miscutils.h>
+#include <gtkmm/filedialog.h>
+#include <gtkmm/filefilter.h>
 
 #include <filesystem>
+#include <memory>
 
-// Shell_handlers.cpp -- HANDLERS. Slot bodies: what a user action actually does.
-// Each is small and single-concern; orchestration it shares lives in helpers.
+// Shell_handlers.cpp -- HANDLERS. What a user action actually does.
 
 namespace lookit {
 
-void Shell::on_pick_folder() {  // handler: folder chooser -> remember it
-    auto dialog = Gtk::FileDialog::create();
-    dialog->set_title("Pick a folder to remember");
-    dialog->select_folder(*this,
-        [this, dialog](const Glib::RefPtr<Gio::AsyncResult>& result) {
-            try {
-                auto dir = dialog->select_folder_finish(result);
-                if (!dir) return;
-                const std::string folder = dir->get_path();
-                if (!folder.empty()) note_recent(folder);
-            } catch (const Glib::Error& e) {
-                if (auto lg = log::get(log::Area::Shell))
-                    lg->info("pick-folder: dialog dismissed ({})", e.what());
-            }
-        });
-}
-
-void Shell::on_recent_open(const std::string& path) {  // handler: open a recent
-    if (path.empty()) return;
-    // A real app would load the project here. The seed just proves the routing:
-    // a vanished folder self-prunes; a live one is promoted back to the front.
-    if (!std::filesystem::exists(path)) {
-        core::recents_remove(m_recents, path);
-        core::save_recents(m_recents_file, m_recents);
-        rebuild_recents_menu();
-        rebuild_recents_page();
-        if (auto lg = log::get(log::Area::Recents))
-            lg->warn("open '{}': gone -- pruned", path);
+// The one door every file comes through: the dialog, a recent, a drop, Files
+// (App::on_open), the CLI, the tile. Open it, show it on View, remember it --
+// or say in a toast why not and stay where we were.
+void Shell::open_path(const std::string& path) {  // handler: open, show, remember
+    std::string error;
+    auto doc = Document::open(path, error);
+    if (!doc) {
+        if (auto lg = log::get(log::Area::Io)) lg->warn("open failed: {} -- {}", path, error);
+        show_toast(std::filesystem::path(path).filename().string() + ": " + error, true);
         return;
     }
-    if (auto lg = log::get(log::Area::Recents)) lg->info("open '{}'", path);
-    note_recent(path);   // move-to-front
+    std::shared_ptr<Document> shared = std::move(doc);
+    m_view_empty.set_visible(false);
+    m_doc_view.set_visible(true);
+    go("view");
+    m_doc_view.set_document(shared);
+    note_recent(path);
+    set_title(shared->name() + " -- Lookit");
+    refresh_info();
+    sync_view_bar();
+    present();
 }
 
-void Shell::on_recent_clear() {  // handler: empty the recents list
+void Shell::on_open() {  // handler: the Open dialog
+    auto dialog = Gtk::FileDialog::create();
+    dialog->set_title("Open");
+    auto filters = Gio::ListStore<Gtk::FileFilter>::create();
+    auto all = Gtk::FileFilter::create();
+    all->set_name("PDFs and pictures");
+    all->add_mime_type("application/pdf");
+    all->add_pixbuf_formats();
+    for (const char* p : {"*.pdf", "*.PDF", "*.heic", "*.avif", "*.webp", "*.jxl"}) all->add_pattern(p);
+    filters->append(all);
+    auto pdf = Gtk::FileFilter::create();
+    pdf->set_name("PDF");
+    pdf->add_mime_type("application/pdf");
+    filters->append(pdf);
+    auto pics = Gtk::FileFilter::create();
+    pics->set_name("Pictures");
+    pics->add_pixbuf_formats();
+    filters->append(pics);
+    auto any = Gtk::FileFilter::create();
+    any->set_name("All files");
+    any->add_pattern("*");
+    filters->append(any);
+    dialog->set_filters(filters);
+    dialog->set_default_filter(all);
+    if (auto d = m_doc_view.document())
+        dialog->set_initial_folder(Gio::File::create_for_path(
+            std::filesystem::path(d->path()).parent_path().string()));
+    dialog->open(*this, [this, dialog](const Glib::RefPtr<Gio::AsyncResult>& res) {
+        try {
+            if (auto f = dialog->open_finish(res)) open_path(f->get_path());
+        } catch (const Glib::Error& e) {
+            if (auto lg = log::get(log::Area::Shell)) lg->info("open dialog: {}", e.what());   // cancelled
+        }
+    });
+}
+
+void Shell::on_recent_open(const std::string& p) {  // handler: a recent
+    if (!std::filesystem::exists(p)) {
+        core::recents_remove(m_recents, p);
+        core::save_recents(m_recents_file, m_recents);
+        rebuild_recents();
+        show_toast("It's gone -- " + std::filesystem::path(p).filename().string() +
+                   " was moved or deleted.", true);
+        return;
+    }
+    open_path(p);
+}
+
+void Shell::on_recent_clear() {  // handler: empty the list
     m_recents.clear();
     core::save_recents(m_recents_file, m_recents);
-    rebuild_recents_menu();
-    rebuild_recents_page();
+    rebuild_recents();
 }
 
-void Shell::on_dump_registry() {  // handler: print the live widget tree
-    // The debuggability payoff, on demand. Same call works from a gdb prompt.
-    registry::dump();
+void Shell::on_page_changed() {  // handler: stack -> tint + nav row
+    const std::string page = m_stack.get_visible_child_name();
+    if (page.empty() || page == m_page) return;
+    if (!m_page.empty()) remove_css_class("page-" + m_page);
+    m_page = page;
+    add_css_class("page-" + page);
+    for (int i = 0; auto* row = m_nav.get_row_at_index(i); ++i)
+        if (std::string(row->get_name()) == "nav." + page) { m_nav.select_row(*row); break; }
 }
 
-void Shell::on_shortcuts() {  // handler: open the keyboard reference
-    // Same lifetime stone as About: build once, re-present. The window's CONTENT
-    // is not written here -- it renders by walking core::shortcut_registry(),
-    // the same list bind_accelerators() wires from, so the two can't drift.
-    if (!m_shortcuts) m_shortcuts = std::make_unique<ShortcutsDialog>();
-    m_shortcuts->show(*this);
+void Shell::on_page_entry() {  // handler: typed a page number
+    try {
+        const int n = std::stoi(std::string(m_page_entry.get_text()));
+        m_doc_view.go_to(n - 1);
+    } catch (...) {
+    }
+    sync_view_bar();
+    gtk_widget_grab_focus(gtk_scrolled_window_get_child(m_doc_view.gobj()));
 }
 
-void Shell::on_about() {  // handler: open the About window (dialog-lifetime exemplar)
-    // Lazily build once, then re-present. Hide-on-close singleton (CANON:
-    // "Lifetime shape is design") -- the X hides it, so one instance lives for
-    // the session and its named children never re-register.
+void Shell::on_about() {  // handler: About (hide-on-close singleton)
     if (!m_about) m_about = std::make_unique<AboutWindow>(*this);
     m_about->present();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// s046 -- the undo stone's handlers. Each verb is ONE call into core::stones
-// (which goes through the journal) and then says where the selection goes.
-// None of them writes m_stones directly: the selftest's gate would not see a
-// handler that did, so the rule is kept here by hand -- handlers call verbs.
-// ─────────────────────────────────────────────────────────────────────────────
-void Shell::on_undo() {  // handler: take the last step back
-    const auto r = m_journal.undo();
-    if (!r.done) return;
-    m_sel = r.selection.empty() ? std::string{} : r.selection.front();
-    m_undo_said.set_text("Undid: " + r.label);
-    select_stone(m_sel, true);
-    if (auto lg = log::get(log::Area::Shell)) lg->info("undo: {}", r.label);
+void Shell::on_shortcuts() {  // handler: keyboard reference (renders from the registry)
+    if (!m_shortcuts) m_shortcuts = std::make_unique<ShortcutsDialog>();
+    m_shortcuts->show(*this);
 }
 
-void Shell::on_redo() {  // handler: put the undone step back
-    const auto r = m_journal.redo();
-    if (!r.done) return;
-    m_sel = r.selection.empty() ? std::string{} : r.selection.front();
-    m_undo_said.set_text("Redid: " + r.label);
-    select_stone(m_sel, true);
-    if (auto lg = log::get(log::Area::Shell)) lg->info("redo: {}", r.label);
-}
+void Shell::on_toggle_left_drawer()  { if (m_drawers.toggle(core::Drawers::Side::Left))  apply_drawers(); }
+void Shell::on_toggle_right_drawer() { if (m_drawers.toggle(core::Drawers::Side::Right)) apply_drawers(); }
+void Shell::on_close_drawers()       { if (m_drawers.close()) apply_drawers(); }
 
-void Shell::on_stone_add() {  // handler: a new stone just below the selection
-    const auto id = core::stones::add(m_journal, m_stones, "Stone", m_sel);
-    m_journal.reselect({id});
-    m_sel = id;
-    select_stone(id, false);
-    m_stone_name.grab_focus();   // name it next -- the field keeps its own Ctrl+Z
-}
-
-void Shell::on_stone_delete() {  // handler: delete; the neighbour takes the selection
-    if (m_sel.empty()) return;
-    const auto next = core::stones::neighbour(m_stones, m_sel);
-    if (!core::stones::remove(m_journal, m_stones, m_sel)) return;
-    m_sel = next;
-    m_journal.reselect(next.empty() ? std::vector<std::string>{} : std::vector<std::string>{next});
-    select_stone(next, true);   // the KEYBOARD goes with it: the next Ctrl+Z lands
-}
-
-void Shell::on_stone_up() {  // handler
-    if (!m_sel.empty() && core::stones::move_up(m_journal, m_stones, m_sel)) select_stone(m_sel, true);
-}
-
-void Shell::on_stone_down() {  // handler
-    if (!m_sel.empty() && core::stones::move_down(m_journal, m_stones, m_sel)) select_stone(m_sel, true);
-}
-
-void Shell::on_stone_rename() {  // handler: Enter in the name field, or leaving it
-    if (m_painting || m_sel.empty()) return;
-    const auto v = m_stones.get(m_sel);
-    const std::string name = m_stone_name.get_text();
-    if (v && v->name != name) core::stones::rename(m_journal, m_stones, m_sel, name);
-}
-
-void Shell::on_stone_size() {  // handler: the slider moved
-    if (m_painting || m_sel.empty()) return;
-    const int n = static_cast<int>(m_stone_size.get_value() + 0.5);
-    // Mid-drag the gesture is open and this is just a write inside it; by
-    // keys or the wheel it is a step that merges with the presses before it.
-    if (m_journal.in_gesture()) core::stones::drag_to(m_journal, m_stones, m_sel, n);
-    else                        core::stones::resize(m_journal, m_stones, m_sel, n);
-}
-
-// ── The edge drawers ────────────────────────────────────────────────────────
-// The rule (one open at a time) is core::Drawers'; these only ask it and paint.
-void Shell::on_toggle_left_drawer() {   // handler: tab / F9 / menu
-    if (m_drawers.toggle(core::Drawers::Side::Left)) apply_drawers();
-}
-
-void Shell::on_toggle_right_drawer() {  // handler: tab / Shift+F9 / menu
-    if (m_drawers.toggle(core::Drawers::Side::Right)) apply_drawers();
-}
-
-void Shell::on_close_drawers() {        // handler: scrim click / Esc
-    if (m_drawers.close()) apply_drawers();
-}
-
-// ── The quick-settings-tile stone ──────────────────────────────────────────
-// App's actions call these. Both end in take_text, which owns the rules.
-
+// ── The quick-settings tile (Cairn's stone) ─────────────────────────────────
+// Lookit's tile opens: the text is a path or a file:// link. Cleaned and capped
+// by core::tile first (the same rules the tile's lib.js applies).
 void Shell::receive_text(const std::string& raw) {  // handler: the tile / --send TEXT
-    take_text(raw, static_cast<int>(core::tile::Where::Line));
+    const auto req = core::tile::request(raw, core::tile::Where::Line);
+    if (!req.error.empty()) { show_toast(req.error, true); present(); return; }
+    if (req.text.empty()) return;
+    std::string path = req.text;
+    if (path.rfind("file://", 0) == 0) {
+        try { path = Glib::filename_from_uri(path); } catch (const Glib::Error&) {}
+    }
+    if (path.size() > 1 && path.front() == '~') path = Glib::get_home_dir() + path.substr(1);
+    if (path.size() > 1 && (path.front() == '\'' || path.front() == '"') && path.back() == path.front())
+        path = path.substr(1, path.size() - 2);
+    if (!std::filesystem::is_regular_file(path)) {
+        show_toast("Not a file Lookit can find: " + req.text, true);
+        present();
+        return;
+    }
+    open_path(path);
 }
 
 void Shell::receive_clipboard() {  // handler: --send-clipboard / desktop action
-    m_stack.set_visible_child("tile");
     present();
-    // On Wayland only the focused window may read the clipboard, so wait until
-    // this window is active (or ~1.5 s, then try anyway). The tile itself never
-    // needs this: the shell reads the clipboard and sends receive-text.
+    // On Wayland only the focused window may read the clipboard: wait until
+    // active (or ~1.5 s, then try anyway).
     auto done = std::make_shared<bool>(false);
     auto conn = std::make_shared<sigc::connection>();
     auto read = [this, done, conn]() {
@@ -182,12 +166,13 @@ void Shell::receive_clipboard() {  // handler: --send-clipboard / desktop action
         conn->disconnect();
         get_clipboard()->read_text_async([this](Glib::RefPtr<Gio::AsyncResult>& res) {
             std::string text;
-            try {
-                text = get_clipboard()->read_text_finish(res);
-            } catch (const Glib::Error& e) {
-                if (auto lg = log::get(log::Area::Shell)) lg->warn("tile: clipboard read failed: {}", e.what());
+            try { text = get_clipboard()->read_text_finish(res); }
+            catch (const Glib::Error& e) {
+                if (auto lg = log::get(log::Area::Shell)) lg->warn("clipboard read failed: {}", e.what());
             }
-            take_text(text, static_cast<int>(core::tile::Where::Clipboard));
+            const auto req = core::tile::request(text, core::tile::Where::Clipboard);
+            if (!req.error.empty()) show_toast(req.error, true);
+            else receive_text(req.text);
         });
     };
     if (is_active()) { read(); return; }

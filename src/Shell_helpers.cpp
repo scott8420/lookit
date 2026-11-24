@@ -1,224 +1,178 @@
 #include "Shell.hpp"
-#include "core/TileText.hpp"
-#include "core/Recents.hpp"
 #include "Log.hpp"
+#include "core/FileKind.hpp"
+#include "core/Recents.hpp"
 
-#include <gtkmm/label.h>
-#include <gtkmm/editable.h>
-#include <gtkmm/textview.h>
-#include <glibmm/main.h>
 #include <giomm/menuitem.h>
+#include <glibmm/main.h>
+#include <glibmm/markup.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/variant.h>
+#include <gtkmm/button.h>
+#include <gtkmm/label.h>
 
+#include <cmath>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 
-// Shell_helpers.cpp -- HELPERS. Reusable orchestration called from zones,
-// bindings, and handlers: the recents seam (path resolution, persist, and the
-// two-surface repaint).
+// Shell_helpers.cpp -- HELPERS. Reusable sync called from zones, bindings and
+// handlers: recents (path, persist, two surfaces), the toolbar, toasts, the
+// drawers and the Info panel.
 
 namespace lookit {
 
-std::string Shell::recents_file() const {  // helper: XDG path (UI-side resolution)
-    // The UI resolves the XDG dir (Glib here) and hands the core a plain path --
-    // the core stays GTK-free (docs/two-layer-seam.md).
-    return (std::filesystem::path(Glib::get_user_data_dir()) / "lookit" / "recent.json")
-        .string();
+namespace fs = std::filesystem;
+
+std::string Shell::recents_file() const {  // helper: the XDG path
+    return (fs::path(Glib::get_user_data_dir()) / "lookit" / "recent.json").string();
 }
 
 void Shell::note_recent(const std::string& path) {  // helper: push + persist + repaint
     if (path.empty()) return;
-    core::recents_add(m_recents, path);
+    core::recents_add(m_recents, path, 12);
     core::save_recents(m_recents_file, m_recents);
-    rebuild_recents_menu();
-    rebuild_recents_page();
+    rebuild_recents();
 }
 
-void Shell::rebuild_recents_menu() {  // helper: repaint the submenu
-    if (!m_recents_menu) return;
+// Two surfaces, one list (Cairn's recents stone): the cards on Home and the
+// Open Recent submenu, both naming recents.open(<path>).
+void Shell::rebuild_recents() {  // helper: the cards + the submenu
+    while (auto* c = m_recents_flow.get_first_child()) m_recents_flow.remove(*c);
     m_recents_menu->remove_all();
-
-    // Display name = folder basename; identical basenames get their parent dir
-    // appended so they're distinguishable (Curvz's disambiguation).
-    std::vector<std::string> names(m_recents.size());
-    for (std::size_t i = 0; i < m_recents.size(); ++i)
-        names[i] = std::filesystem::path(m_recents[i]).filename().string();
-    for (std::size_t i = 0; i < names.size(); ++i)
-        for (std::size_t j = i + 1; j < names.size(); ++j)
-            if (names[i] == names[j]) {
-                const std::string pi =
-                    std::filesystem::path(m_recents[i]).parent_path().filename().string();
-                const std::string pj =
-                    std::filesystem::path(m_recents[j]).parent_path().filename().string();
-                if (!pi.empty()) names[i] += "  (" + pi + ")";
-                if (!pj.empty()) names[j] += "  (" + pj + ")";
-            }
-
-    for (std::size_t i = 0; i < m_recents.size(); ++i) {
-        auto item = Gio::MenuItem::create(names[i], "");
-        item->set_action_and_target(
-            "recents.open", Glib::Variant<Glib::ustring>::create(m_recents[i]));
-        m_recents_menu->append_item(item);
-    }
-
-    auto clear_section = Gio::Menu::create();
-    clear_section->append("Clear recent", "recents.clear");
-    m_recents_menu->append_section("", clear_section);
-    if (m_recents_clear) m_recents_clear->set_enabled(!m_recents.empty());
-}
-
-void Shell::rebuild_recents_page() {  // helper: repaint the live list page
-    // Clear existing rows.
-    while (auto* row = m_recents_list.get_row_at_index(0))
-        m_recents_list.remove(*row);
-
-    if (m_recents.empty()) {
-        auto* empty = Gtk::make_managed<Gtk::Label>("(nothing remembered yet)");
-        empty->set_xalign(0.0f);
-        empty->set_margin(12);
-        m_recents_list.append(*empty);
-        return;
-    }
     for (const auto& p : m_recents) {
-        auto* lbl = Gtk::make_managed<Gtk::Label>(p);
-        lbl->set_xalign(0.0f);
-        lbl->set_margin(8);
-        lbl->set_selectable(true);
-        m_recents_list.append(*lbl);
+        const fs::path fp(p);
+        auto item = Gio::MenuItem::create(fp.filename().string(), "");
+        item->set_action_and_target("recents.open", Glib::Variant<Glib::ustring>::create(p));
+        m_recents_menu->append_item(item);
+
+        auto card = Gtk::make_managed<Gtk::Button>();
+        card->add_css_class("recent-card");
+        card->set_tooltip_text(p);
+        card->set_action_name("recents.open");
+        card->set_action_target_value(Glib::Variant<Glib::ustring>::create(p));
+        auto box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 2);
+        auto kind = Gtk::make_managed<Gtk::Label>(core::kind_label(core::kind_from_name(p)));
+        kind->add_css_class("recent-kind");
+        kind->set_xalign(0.0f);
+        auto name = Gtk::make_managed<Gtk::Label>(fp.filename().string());
+        name->add_css_class("recent-name");
+        name->set_xalign(0.0f);
+        name->set_ellipsize(Pango::EllipsizeMode::MIDDLE);
+        std::string where = fp.parent_path().string();
+        const std::string home = Glib::get_home_dir();
+        if (where.rfind(home, 0) == 0) where = "~" + where.substr(home.size());
+        auto dir = Gtk::make_managed<Gtk::Label>(where);
+        dir->add_css_class("recent-where");
+        dir->set_xalign(0.0f);
+        dir->set_ellipsize(Pango::EllipsizeMode::START);
+        box->append(*kind);
+        box->append(*name);
+        box->append(*dir);
+        card->set_child(*box);
+        m_recents_flow.append(*card);
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// s046 -- the undo stone's helpers.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// One repaint per idle, AFTER the writes that caused it. A verb can write
-// several records (a move writes two); repainting per write would rebuild the
-// list mid-verb, and a row rebuilt under a live click or a focused row is torn
-// down (jot s045: "open UI after the rebuild you caused").
-void Shell::queue_stones_repaint() {  // helper
-    if (m_repaint_queued) return;
-    m_repaint_queued = true;
-    Glib::signal_idle().connect_once([this]() {
-        m_repaint_queued = false;
-        repaint_stones();
-    });
-}
-
-// The list and the detail fields, from the model. Setting a field here is not a
-// user choice: m_painting keeps the field's own signal from writing it back.
-void Shell::repaint_stones() {  // helper
-    m_painting = true;
-    while (auto* c = m_stone_list.get_first_child()) m_stone_list.remove(*c);
-    Gtk::ListBoxRow* chosen = nullptr;
-    for (const auto& id : m_stones.ids()) {
-        const auto v = m_stones.get(id);
-        auto row = Gtk::make_managed<Gtk::ListBoxRow>();
-        row->set_name(id);   // the row carries its stone's id
-        auto label = Gtk::make_managed<Gtk::Label>(
-            v->name + "   ·   size " + std::to_string(v->size));
-        label->set_xalign(0.0f);
-        label->set_margin(6);
-        row->set_child(*label);
-        m_stone_list.append(*row);
-        if (id == m_sel) chosen = row;
+    if (!m_recents.empty()) {
+        auto clear = Gio::Menu::create();
+        clear->append("Clear Recent", "recents.clear");
+        m_recents_menu->append_section(clear);
     }
-    if (chosen) m_stone_list.select_row(*chosen);
-    else        m_stone_list.unselect_all();
+    m_recents_clear->set_enabled(!m_recents.empty());
+    m_recents_head.set_visible(!m_recents.empty());
+}
 
-    const auto v = m_sel.empty() ? std::nullopt : m_stones.get(m_sel);
-    m_stone_name.set_sensitive(v.has_value());
-    m_stone_size.set_sensitive(v.has_value());
-    // Never overwrite a field the user is typing in.
-    if (!m_stone_name.has_focus() || !v) m_stone_name.set_text(v ? v->name : std::string{});
-    if (!m_journal.in_gesture()) m_stone_size.set_value(v ? v->size : 1);
-    m_painting = false;
-
-    if (m_keys_to_list) {
-        m_keys_to_list = false;
-        if (chosen) chosen->grab_focus();
-        else        m_stone_list.grab_focus();
+// The toolbar is painted FROM the view, never the other way: DocView's
+// getters are the truth, and this runs on every signal_changed.
+void Shell::sync_view_bar() {  // helper: name, zoom, page, fit toggles
+    m_syncing = true;
+    const auto& doc = m_doc_view.document();
+    const bool has = bool(doc);
+    m_doc_name.set_text(has ? doc->name() : "");
+    {
+        std::ostringstream z;
+        z << int(std::lround(m_doc_view.scale() * 100)) << "%";
+        m_zoom_label.set_text(has ? z.str() : "");
     }
+    const int n = m_doc_view.count();
+    if (!m_page_entry.has_focus())
+        m_page_entry.set_text(has ? std::to_string(m_doc_view.page() + 1) : "");
+    m_page_of.set_text(has ? "of " + std::to_string(n) : "");
+    m_pages_group.set_visible(n > 1);   // a picture has no pages to step through
+    m_fit_width.set_active(has && m_doc_view.fit() == DocView::Fit::Width);
+    m_fit_page.set_active(has && m_doc_view.fit() == DocView::Fit::Page);
+    for (auto& a : {m_act_zoom_in, m_act_zoom_out, m_act_zoom_actual, m_act_fit_width, m_act_fit_page, m_act_book})
+        if (a) a->set_enabled(has);
+    m_bar.set_sensitive(has);
+    m_syncing = false;
 }
 
-// Select a stone (and, with `keys`, give its row the keyboard) once the
-// repaint the last write queued has run.
-void Shell::select_stone(const std::string& id, bool keys) {  // helper
-    m_sel = id;
-    m_keys_to_list = m_keys_to_list || keys;
-    queue_stones_repaint();
+void Shell::show_toast(const std::string& text, bool error) {  // helper
+    m_toast_label.set_text(text);
+    // Not "error": the theme styles that class (red text) behind our back.
+    if (error) m_toast_label.add_css_class("toast-error");
+    else m_toast_label.remove_css_class("toast-error");
+    m_toast.set_reveal_child(true);
+    m_toast_timer.disconnect();
+    m_toast_timer = Glib::signal_timeout().connect_seconds(
+        [this] { m_toast.set_reveal_child(false); return false; }, 5);
 }
 
-// Undo / Redo say what they would do, and grey when there is nothing: the
-// actions (so buttons and menu items follow), the button tooltips, and the
-// menu's labels -- "Undo Delete “Jade”" names the step before you take it.
-void Shell::update_undo_ui() {  // helper
-    if (m_act_undo) m_act_undo->set_enabled(m_journal.can_undo());
-    if (m_act_redo) m_act_redo->set_enabled(m_journal.can_redo());
-    const std::string u = m_journal.undo_label(), r = m_journal.redo_label();
-    m_undo_button.set_tooltip_text(u.empty() ? "Nothing to undo" : "Undo " + u + "  (Ctrl+Z)");
-    m_redo_button.set_tooltip_text(r.empty() ? "Nothing to redo" : "Redo " + r + "  (Ctrl+Shift+Z)");
-    if (m_edit_menu) {
-        m_edit_menu->remove_all();
-        m_edit_menu->append(u.empty() ? "Undo" : "Undo " + u, "win.undo");
-        m_edit_menu->append(r.empty() ? "Redo" : "Redo " + r, "win.redo");
-    }
+void Shell::go(const std::string& page) {  // helper: show a page
+    if (m_stack.get_child_by_name(page)) m_stack.set_visible_child(page);
 }
 
-// Is the keyboard in something that types? Then Ctrl+Z is that box's own,
-// whether or not it had anything to undo.
-bool Shell::focus_is_text() const {  // helper
-    for (const Gtk::Widget* w = get_focus(); w; w = w->get_parent())
-        if (dynamic_cast<const Gtk::TextView*>(w) || dynamic_cast<const Gtk::Editable*>(w)) return true;
-    return false;
-}
-
-// Paint the drawers from m_drawers -- the one place a revealer is told to
-// move. A report drawer reads its data as it opens; on close the keyboard goes
-// back to the content (a closed drawer must not keep it).
 void Shell::apply_drawers() {  // helper: revealers + scrim from m_drawers
     using Side = core::Drawers::Side;
-    if (m_drawers.is_open(Side::Right)) refresh_right_drawer();
+    if (m_drawers.is_open(Side::Right)) refresh_info();
     m_left_drawer.set_reveal_child(m_drawers.is_open(Side::Left));
     m_right_drawer.set_reveal_child(m_drawers.is_open(Side::Right));
     m_scrim.set_visible(m_drawers.scrim());
-    if (!m_drawers.scrim()) m_stack.grab_focus();
-    if (auto lg = log::get(log::Area::Shell))
-        lg->info("drawers: {}", m_drawers.is_open(Side::Left)  ? "left open"
-                              : m_drawers.is_open(Side::Right) ? "right open" : "closed");
+    if (!m_drawers.scrim() && m_doc_view.document())
+        gtk_widget_grab_focus(gtk_scrolled_window_get_child(m_doc_view.gobj()));
 }
 
-void Shell::refresh_right_drawer() {  // helper: the report drawer refreshes on open
-    const auto n = m_stones.ids().size();
-    m_right_report.set_markup(
-        "Read each time it opens, not kept live.\n\n"
-        "Stones on the Undo page: <b>" + std::to_string(n) + "</b>\n"
-        "Recent folders: <b>" + std::to_string(m_recents.size()) + "</b>\n\n"
-        "In a game this is the scorecard and the stats.");
+namespace {
+std::string human_size(std::uintmax_t b) {
+    const char* units[] = {"bytes", "KB", "MB", "GB"};
+    double v = double(b);
+    int u = 0;
+    while (v >= 1024 && u < 3) { v /= 1024; ++u; }
+    std::ostringstream o;
+    if (u == 0) o << b << " bytes";
+    else o << std::fixed << std::setprecision(v < 10 ? 1 : 0) << v << " " << units[u];
+    return o.str();
 }
+std::string row(const std::string& k, const std::string& v) {
+    return "<span size='small' alpha='60%'>" + Glib::Markup::escape_text(k) + "</span>\n<b>" +
+           Glib::Markup::escape_text(v) + "</b>\n\n";
+}
+}  // namespace
 
-// The quick-settings-tile stone: the one place arriving text is judged. Cleaned
-// and capped by core::tile (the C++ twin of the tile's lib.js), listed newest
-// first, the page shown, the window raised. `where` is core::tile::Where.
-void Shell::take_text(const std::string& raw, int where) {  // helper: clean, cap, list, show
-    const auto req = core::tile::request(raw, static_cast<core::tile::Where>(where));
-    m_stack.set_visible_child("tile");
-    if (!req.error.empty()) {
-        m_tile_said.set_text(req.error);
-        if (auto lg = log::get(log::Area::Shell)) lg->info("tile: refused -- {}", req.error);
-    } else if (!req.text.empty()) {
-        auto row = Gtk::make_managed<Gtk::Label>(req.text);
-        row->set_xalign(0.0f);
-        row->set_wrap(true);
-        row->set_selectable(true);
-        row->set_margin(6);
-        m_tile_list.prepend(*row);
-        m_tile_said.set_text("Arrived: " + std::to_string(core::tile::codepoints(req.text)) +
-                             " character(s).");
-        if (auto lg = log::get(log::Area::Shell))
-            lg->info("tile: took {} char(s)", core::tile::codepoints(req.text));
+void Shell::refresh_info() {  // helper: the Info drawer
+    const auto& d = m_doc_view.document();
+    if (!d) { m_info.set_markup("Nothing open."); return; }
+    std::string m;
+    m += row("Name", d->name());
+    if (!d->title().empty() && d->title() != "untitled") m += row("Title", d->title());
+    m += row("Kind", core::kind_label(d->kind()));
+    std::error_code ec;
+    const auto bytes = fs::file_size(d->path(), ec);
+    if (!ec) m += row("Size", human_size(bytes));
+    if (d->kind() == core::Kind::Image) {
+        const auto s = d->size(0);
+        m += row("Pixels", std::to_string(int(s.w)) + " × " + std::to_string(int(s.h)));
+    } else {
+        m += row("Pages", std::to_string(d->count()));
+        if (d->count() > 0) {
+            const auto s = d->size(std::max(0, m_doc_view.page()));
+            std::ostringstream o;
+            o << std::fixed << std::setprecision(2) << s.w / 72.0 << " × " << s.h / 72.0 << " in  ("
+              << std::setprecision(0) << s.w * 25.4 / 72.0 << " × " << s.h * 25.4 / 72.0 << " mm)";
+            m += row("This page", o.str());
+        }
     }
-    present();
+    m += row("Where", fs::path(d->path()).parent_path().string());
+    m_info.set_markup(m);
 }
 
 }  // namespace lookit

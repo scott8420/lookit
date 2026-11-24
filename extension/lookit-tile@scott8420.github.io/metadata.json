@@ -1,7 +1,7 @@
 {
   "uuid": "lookit-tile@scott8420.github.io",
   "name": "Lookit Tile",
-  "description": "A Lookit tile in quick settings: type or paste a line, press Enter, and Lookit comes up with it. Also sends the clipboard or the selected text.",
+  "description": "A Lookit tile in quick settings: paste a file path, press Enter, and Lookit opens it. Also opens a path on the clipboard or selected.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/scott8420/lookit",
   "version": 1

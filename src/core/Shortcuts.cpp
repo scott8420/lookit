@@ -107,33 +107,40 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
     // Deliberately small -- a seed proves the SHAPE, not a product's key set. It
     // carries one doc-only row so that half of the paradigm is exercised too.
     static const std::vector<ShortcutSpec> kReg = {
-        // ── Diagnostics ───────────────────────────────────────────────────────
-        {"Diagnostics", "win.dump-registry", {"<Ctrl>d"}, "",
-         "Dump the widget registry to the log"},
-
         // ── Drawers ───────────────────────────────────────────────────────────
-        {"Drawers", "win.toggle-left-drawer",  {"F9"},        "", "Hints drawer (left) -- open / close"},
-        {"Drawers", "win.toggle-right-drawer", {"<Shift>F9"}, "", "Report drawer (right) -- open / close"},
+        {"Drawers", "win.toggle-left-drawer",  {"F9"},        "", "Help drawer (left) -- open / close"},
+        {"Drawers", "win.toggle-right-drawer", {"<Shift>F9"}, "", "Info drawer (right) -- open / close"},
         // Doc-only: Esc is heard by the window, and only while a drawer is open.
         {"Drawers", "", {}, "Esc", "Close the open drawer"},
 
-        // ── Edit (s046) ───────────────────────────────────────────────────────
-        // Doc-only ON PURPOSE: an accelerator would take Ctrl+Z from every text
-        // box. The window hears these instead (Shell_bindings.cpp).
-        {"Edit", "", {}, "Ctrl+Z", "Undo -- anywhere but a text box (which keeps its own)"},
-        {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
-
         // ── General ───────────────────────────────────────────────────────────
-        {"General", "win.pick-folder",   {"<Ctrl>o"}, "", "Pick a folder"},
+        {"General", "win.open",          {"<Ctrl>o"}, "", "Open a PDF or a picture"},
         {"General", "win.shortcuts",     {"<Ctrl>question", "<Ctrl>slash"}, "",
          "Keyboard shortcuts (this window)"},
         {"General", "win.about",         {"F1"}, "", "About Lookit"},
-        {"General", "win.quit",          {"<Ctrl>q"}, "", "Quit"},
+        {"General", "win.quit",          {"<Ctrl>q", "<Ctrl>w"}, "", "Close the window"},
 
         // ── Mouse ─────────────────────────────────────────────────────────────
-        // Doc-only: a gesture is not a GAction, but the reader still needs it.
-        {"Mouse", "", {}, "Click a recent", "Open that folder"},
+        // Doc-only: gestures are not GActions, but the reader still needs them.
+        {"Mouse", "", {}, "Ctrl+wheel  /  pinch", "Zoom about the pointer"},
+        {"Mouse", "", {}, "Drop a file", "Open it"},
 
+        // ── Reading ───────────────────────────────────────────────────────────
+        // Doc-only: the page view hears these itself (DocView), so they never
+        // leave a text box without its own keys.
+        {"Reading", "", {}, "Space  /  Shift+Space", "Down / up a screen"},
+        {"Reading", "", {}, "Page Down  /  Page Up", "Down / up a screen"},
+        {"Reading", "", {}, "\u2190  /  \u2192", "Previous / next page (spread, in Book view)"},
+        {"Reading", "", {}, "Home  /  End", "First / last page"},
+        {"Reading", "win.go-to-page",    {"<Ctrl>g"}, "", "Go to a page"},
+        {"Reading", "win.book",          {"<Ctrl>b"}, "", "Book view -- spreads, page 1 alone on the right"},
+
+        // ── Zoom ──────────────────────────────────────────────────────────────
+        {"Zoom", "win.zoom-in",     {"<Ctrl>equal", "<Ctrl>plus", "<Ctrl>KP_Add"}, "", "Zoom in"},
+        {"Zoom", "win.zoom-out",    {"<Ctrl>minus", "<Ctrl>KP_Subtract"}, "", "Zoom out"},
+        {"Zoom", "win.zoom-actual", {"<Ctrl>0", "<Ctrl>KP_0"}, "", "Actual size (100%)"},
+        {"Zoom", "win.fit-width",   {"<Ctrl>1"}, "", "Fit width"},
+        {"Zoom", "win.fit-page",    {"<Ctrl>2"}, "", "Fit page"},
     };
     return kReg;
 }

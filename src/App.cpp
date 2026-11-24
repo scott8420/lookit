@@ -8,6 +8,7 @@
 #include "Css.hpp"
 
 #include <gtkmm/cssprovider.h>
+#include <gtkmm/settings.h>
 #include <gtkmm/stylecontext.h>
 
 #include <gtkmm/icontheme.h>
@@ -27,7 +28,7 @@ Glib::RefPtr<App> App::create() {
     return Glib::make_refptr_for_instance(new App());
 }
 
-App::App() : Gtk::Application("io.github.scott8420.Lookit") {
+App::App() : Gtk::Application("io.github.scott8420.Lookit", Gio::Application::Flags::HANDLES_OPEN) {
     // ── THE QUICK-SETTINGS-TILE STONE (docs/quick-settings-tile.md) ─────────
     // Two app actions are the whole contract with the outside:
     //   app.receive-text(s)    the tile's line, clipboard or selection
@@ -37,7 +38,7 @@ App::App() : Gtk::Application("io.github.scott8420.Lookit") {
     // install-desktop.sh writes), then the action arrives. The command-line
     // options below are the same two actions by another door.
     add_main_option_entry(Gio::Application::OptionType::STRING, "send", 's',
-                          "Hand TEXT to Lookit (what the tile does)", "TEXT");
+                          "Open the file at TEXT (what the tile does)", "TEXT");
     add_main_option_entry(Gio::Application::OptionType::BOOL, "send-clipboard", '\0',
                           "Hand the clipboard's text to Lookit");
     signal_handle_local_options().connect(sigc::mem_fun(*this, &App::on_local_options), false);
@@ -93,6 +94,20 @@ void App::on_activate() {
     ensure_shell().present();
 }
 
+// Files from outside: Files' "Open With", `lookit a.pdf`, D-Bus Open from the
+// desktop entry. The first is shown; the rest go on the Recent list.
+void App::on_open(const Gio::Application::type_vec_files& files, const Glib::ustring&) {
+    auto& shell = ensure_shell();
+    bool first = true;
+    for (const auto& f : files) {
+        const std::string p = f->get_path();
+        if (p.empty()) continue;
+        if (first) shell.open_path(p);
+        first = false;
+    }
+    shell.present();
+}
+
 // One window, ever. Before the tile stone, every activate built a new Shell --
 // harmless from the app grid, wrong once D-Bus can activate a running Lookit
 // (each tile send would have opened another window). A closed window comes
@@ -103,18 +118,14 @@ Shell& App::ensure_shell() {
         return *m_shell;
     }
 
-    // ── THE DESKTOP'S LIGHT/DARK PREFERENCE, FIRST, BEFORE ANY WINDOW ───────
-    // GTK4 does not follow it on its own and Lookit does not link libadwaita,
-    // so the app has to ask (see Appearance.hpp). Ahead of `new Shell()` on
-    // purpose: the difference between starting dark and starting light and
-    // repainting.
-    //
-    // It also has to be ahead of the icon theme work below. The logo is a
-    // SYMBOLIC icon, which GTK recolours to the theme foreground -- so it
-    // inherits the answer to this question rather than carrying an opinion of
-    // its own, and that is exactly why the bundle ships one symbolic SVG
-    // instead of a light and a dark PNG.
-    appearance::follow_system();
+    // ── ALWAYS DARK ─────────────────────────────────────────────────────────
+    // Lookit wears the Rouster skin (Css.hpp): its own dark look, a gradient
+    // per page -- Scott's colourful-utility family. GTK's dark variant is asked
+    // for ahead of `new Shell()`, so menus, popovers and the file chooser
+    // match. Appearance.* (follow the desktop) stays compiled, as in Fowler,
+    // for a later "match the desktop" setting.
+    if (auto settings = Gtk::Settings::get_default())
+        settings->property_gtk_application_prefer_dark_theme() = true;
 
     // The app stylesheet (Css.hpp): the drawer tabs' hover-reveal, the panels.
     // APPLICATION priority so our named classes beat the theme's defaults.
@@ -126,7 +137,7 @@ Shell& App::ensure_shell() {
     }
 
     // Register the compiled-in bundle and point the icon theme at its icon
-    // prefix, so set_icon_name("lookit-logo-symbolic") resolves out of the binary
+    // prefix, so set_icon_name("io.github.scott8420.Lookit") resolves out of the binary
     // and GTK recolours it to the theme foreground -- no icon on the user's disk.
     // NB: add_resource_path gets .../icons; GTK appends scalable/apps/ itself.
     g_resources_register(lookit_resources_get_resource());

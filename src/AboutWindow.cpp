@@ -34,7 +34,7 @@ AboutWindow::AboutWindow(Gtk::Window& parent) {
     // Hero logo: symbolic icon from the gresource bundle, recoloured to the
     // theme foreground by GTK. Proof the resource pipeline resolved.
     auto* logo = Gtk::make_managed<widgets::Image>(widgets::unregistered, "shell.about.logo");
-    logo->set_from_icon_name("lookit-logo-symbolic");
+    logo->set_from_icon_name("io.github.scott8420.Lookit");
     logo->set_pixel_size(88);
     page->append(*logo);
 
@@ -47,8 +47,6 @@ AboutWindow::AboutWindow(Gtk::Window& parent) {
     tagline->add_css_class("dim-label");
     page->append(*tagline);
 
-    // The window labels itself with the paradigms it embodies -- honest for a
-    // seed (self-documenting), where a product About box would carry chrome.
     auto* note = Gtk::make_managed<widgets::Label>(widgets::unregistered, "shell.about.note");
     note->set_wrap(true);
     note->set_justify(Gtk::Justification::CENTER);
@@ -56,10 +54,9 @@ AboutWindow::AboutWindow(Gtk::Window& parent) {
     note->set_margin_top(6);
     note->add_css_class("dim-label");
     note->set_markup(
-        "This is the dialog-lifetime exemplar: a custom <tt>Gtk::Window</tt> "
-        "(<tt>Gtk::AboutDialog</tt> is deprecated in GTK4), opened as a "
-        "hide-on-close singleton. The logo above is a symbolic icon resolved "
-        "from the compiled-in gresource bundle.");
+        "PDFs, pictures and a spacebar quick look, for GNOME.\n"
+        "By Scott, with Claude. MIT licence.\n"
+        "<a href='https://github.com/scott8420/lookit'>github.com/scott8420/lookit</a>");
     page->append(*note);
 
     auto* close_btn = Gtk::make_managed<widgets::Button>(

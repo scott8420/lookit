@@ -1,112 +1,109 @@
 #include "Shell.hpp"
 #include "Log.hpp"
-#include "core/Recents.hpp"
 
+#include <gdkmm/contentformats.h>
+#include <giomm/file.h>
 #include <giomm/simpleactiongroup.h>
-#include <gtkmm/eventcontrollerkey.h>
 #include <glibmm/variant.h>
+#include <gtkmm/droptarget.h>
+#include <gtkmm/eventcontrollerkey.h>
 
-#include <filesystem>
-
-// Shell_bindings.cpp -- BINDINGS. What's wired to what: the win.* actions, the
-// parameterised recents action group, and (where a keystroke must survive focus)
-// accelerators. No slot bodies here -- those are handlers; this file only wires.
+// Shell_bindings.cpp -- BINDINGS. What's wired to what: the win.* actions (the
+// menu, the toolbar and the keys all name these), the recents group, Esc for
+// the drawers, and file drops. No slot bodies beyond a call -- those are
+// handlers.
 
 namespace lookit {
 
-void Shell::bind_actions() {  // bindings: actions + recents group
-    // Plain win.* actions -> handler bodies (Shell_handlers.cpp).
-    add_action("pick-folder",   sigc::mem_fun(*this, &Shell::on_pick_folder));
-    add_action("dump-registry", sigc::mem_fun(*this, &Shell::on_dump_registry));
-    add_action("about",         sigc::mem_fun(*this, &Shell::on_about));
-    add_action("shortcuts",     sigc::mem_fun(*this, &Shell::on_shortcuts));
-    add_action("quit",          [this]() { close(); });
+void Shell::bind_actions() {  // bindings: win.* + recents group
+    add_action("open",      sigc::mem_fun(*this, &Shell::on_open));
+    add_action("about",     sigc::mem_fun(*this, &Shell::on_about));
+    add_action("shortcuts", sigc::mem_fun(*this, &Shell::on_shortcuts));
+    add_action("quit",      [this]() { close(); });
     add_action("toggle-left-drawer",  sigc::mem_fun(*this, &Shell::on_toggle_left_drawer));
-    add_action("toggle-right-drawer", sigc::mem_fun(*this, &Shell::on_toggle_right_drawer));
+    m_act_info = add_action("toggle-right-drawer", sigc::mem_fun(*this, &Shell::on_toggle_right_drawer));
 
-    // Recents: a "recents" action group with a PARAMETERISED open verb --
-    // recents.open(<path>) carries each entry's path as its target, so one
-    // action serves every menu row (CANON/Curvz: the proven parameterised-action
-    // shape). clear is held so rebuild_recents_menu can grey it when empty.
+    // The view's verbs. Held so sync_view_bar can grey them with nothing open.
+    m_act_zoom_in     = add_action("zoom-in",     [this] { m_doc_view.zoom_in(); });
+    m_act_zoom_out    = add_action("zoom-out",    [this] { m_doc_view.zoom_out(); });
+    m_act_zoom_actual = add_action("zoom-actual", [this] { m_doc_view.zoom_actual(); });
+    m_act_fit_width   = add_action("fit-width",   [this] { m_doc_view.fit_width(); });
+    m_act_fit_page    = add_action("fit-page",    [this] { m_doc_view.fit_page(); });
+    m_act_book = add_action_bool("book", [this] {
+        bool on = false;
+        m_act_book->get_state(on);
+        on = !on;
+        m_act_book->change_state(on);
+        m_doc_view.set_book(on);
+    }, false);
+    add_action("next-page", [this] { m_doc_view.next_page(); });
+    add_action("prev-page", [this] { m_doc_view.prev_page(); });
+    add_action("go-to-page", [this] {
+        if (!m_doc_view.document()) return;
+        go("view");
+        m_page_entry.grab_focus();
+        m_page_entry.select_region(0, -1);
+    });
+
+    // Recents: one PARAMETERISED verb, recents.open(<path>), serves every row
+    // of the submenu and every card (Cairn's recents stone).
     auto group = Gio::SimpleActionGroup::create();
     group->add_action_with_parameter(
         "open", Glib::Variant<Glib::ustring>::variant_type(),
         [this](const Glib::VariantBase& param) {
-            const std::string p =
-                Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(param).get();
-            on_recent_open(p);
+            on_recent_open(Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(param).get());
         });
     m_recents_clear = Gio::SimpleAction::create("clear");
-    m_recents_clear->signal_activate().connect(
-        [this](const Glib::VariantBase&) { on_recent_clear(); });
+    m_recents_clear->signal_activate().connect([this](const Glib::VariantBase&) { on_recent_clear(); });
     group->add_action(m_recents_clear);
     insert_action_group("recents", group);
+}
 
-    // Now that the group exists, load the persisted list (prunes stale folders).
-    m_recents = core::load_recents(m_recents_file);
-
-    // ── s046: the undo stone ────────────────────────────────────────────────
-    // Undo / Redo are held so update_undo_ui can grey them; the stone verbs
-    // are plain actions the page's buttons name.
-    m_act_undo = add_action("undo", sigc::mem_fun(*this, &Shell::on_undo));
-    m_act_redo = add_action("redo", sigc::mem_fun(*this, &Shell::on_redo));
-    add_action("stone-add",    sigc::mem_fun(*this, &Shell::on_stone_add));
-    add_action("stone-delete", sigc::mem_fun(*this, &Shell::on_stone_delete));
-    add_action("stone-up",     sigc::mem_fun(*this, &Shell::on_stone_up));
-    add_action("stone-down",   sigc::mem_fun(*this, &Shell::on_stone_down));
-
-    // The model <-> journal <-> UI wiring. The store asks the journal whether
-    // the door is open (the one-door guard); the journal reads the selection
-    // and tells the UI when Undo / Redo change; the store's changes repaint.
-    m_stones.set_door([this] { return m_journal.open(); });
-    m_stones.set_on_change([this] { queue_stones_repaint(); });
-    m_journal.set_selection_source([this] {
-        return m_sel.empty() ? std::vector<std::string>{} : std::vector<std::string>{m_sel};
-    });
-    m_journal.set_on_change([this] { update_undo_ui(); });
-    {
-        core::Stones::Loading load(m_stones);   // fixture data: not a user choice
-        for (const char* n : {"Ruby", "Jade", "Onyx", "Opal"}) {
-            const auto id = m_stones.fresh_id();
-            m_stones.put(id, core::Stone{n, 3, m_stones.pos_after({})});
-        }
-    }
-
-    // ── Ctrl+Z from ANYWHERE but a text box ─────────────────────────────────
-    // NOT an accelerator: a set_accels_for_action chord fires before the
-    // focused widget, so it would take Ctrl+Z away from every Entry and
-    // TextView (jot s016c met that with Ctrl+Delete). Instead the WINDOW
-    // hears it in the BUBBLE phase -- only keys nothing else took -- and lets
-    // a text box keep its own even when it had nothing to undo. Binding undo
-    // to one widget's focus is the other trap: after a menu closes, or the
-    // focused row is rebuilt away, the keyboard is nowhere and Ctrl+Z is dead
-    // (jot s046a: "undo a delete" did nothing). The registry carries these as
-    // doc-only rows for that reason.
+void Shell::bind_keys() {  // bindings: Esc for drawers
+    // Esc closes an open drawer -- and ONLY when one is open, so it is never
+    // taken from anything else otherwise. BUBBLE: only keys nothing else took.
     auto keys = Gtk::EventControllerKey::create();
     keys->signal_key_pressed().connect(
         [this](guint keyval, guint, Gdk::ModifierType state) {
-            const auto mods = state & (Gdk::ModifierType::CONTROL_MASK |
-                                       Gdk::ModifierType::SHIFT_MASK |
+            const auto mods = state & (Gdk::ModifierType::CONTROL_MASK | Gdk::ModifierType::SHIFT_MASK |
                                        Gdk::ModifierType::ALT_MASK);
-            const auto CTRL  = Gdk::ModifierType::CONTROL_MASK;
-            const auto SHIFT = Gdk::ModifierType::SHIFT_MASK;
-            const char* act = nullptr;
-            if ((keyval == GDK_KEY_z || keyval == GDK_KEY_Z) && mods == CTRL)               act = "win.undo";
-            else if ((keyval == GDK_KEY_z || keyval == GDK_KEY_Z) && mods == (CTRL | SHIFT)) act = "win.redo";
-            else if ((keyval == GDK_KEY_y || keyval == GDK_KEY_Y) && mods == CTRL)          act = "win.redo";
-            // Esc closes an open drawer -- and ONLY when one is open, so Esc is
-            // never taken from anything else (a popover, an entry) otherwise.
             if (keyval == GDK_KEY_Escape && mods == Gdk::ModifierType{} && m_drawers.scrim()) {
                 on_close_drawers();
                 return true;
             }
-            if (!act || focus_is_text()) return false;
-            if (auto lg = log::get(log::Area::Shell)) lg->info("window key -> {}", act);
-            activate_action(act);   // the FULL name: "undo" alone would do nothing
-            return true;
+            return false;
         }, false);
     add_controller(keys);
-    update_undo_ui();
+}
+
+// Files dropped anywhere on the window open; the first one is shown. While a
+// file hovers, the window wears .dropping (Css.hpp lights the hero card).
+void Shell::bind_drop() {  // bindings: files dropped on the window
+    auto drop = Gtk::DropTarget::create(GDK_TYPE_FILE_LIST, Gdk::DragAction::COPY);
+    drop->signal_enter().connect([this](double, double) {
+        add_css_class("dropping");
+        return Gdk::DragAction::COPY;
+    }, false);
+    drop->signal_leave().connect([this] { remove_css_class("dropping"); });
+    drop->signal_drop().connect([this](const Glib::ValueBase& value, double, double) {
+        remove_css_class("dropping");
+        if (!G_VALUE_HOLDS(value.gobj(), GDK_TYPE_FILE_LIST)) return false;
+        auto* list = static_cast<GdkFileList*>(g_value_get_boxed(value.gobj()));
+        GSList* files = gdk_file_list_get_files(list);
+        bool any = false;
+        for (GSList* l = files; l; l = l->next) {
+            if (char* p = g_file_get_path(G_FILE(l->data))) {
+                if (!any) open_path(p);
+                else note_recent(p);   // the rest wait on Home, a click away
+                any = true;
+                g_free(p);
+            }
+        }
+        g_slist_free(files);
+        if (auto lg = log::get(log::Area::Shell)) lg->info("drop: {}", any ? "opened" : "nothing usable");
+        return any;
+    }, false);
+    add_controller(drop);
 }
 
 }  // namespace lookit

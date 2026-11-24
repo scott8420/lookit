@@ -33,8 +33,8 @@ const APP_ID = 'io.github.scott8420.Lookit';
 const OBJECT_PATH = '/io/github/scott8420/Lookit';
 const APP_NAME = 'Lookit';
 const ACTION = 'receive-text';          // App.cpp: add_action_with_parameter
-const ICON = 'lookit-logo-symbolic.svg'; // copied in by install-extension.sh
-const HINT = 'Enter sends it. Esc closes.';
+const ICON = 'io.github.scott8420.Lookit-symbolic.svg'; // copied in by install-extension.sh
+const HINT = 'Enter opens it. Esc closes.';
 
 function theApp() {
     return Shell.AppSystem.get_default().lookup_app(`${APP_ID}.desktop`);
@@ -61,7 +61,7 @@ class LookitTileToggle extends QuickSettings.QuickMenuToggle {
             `${extension.path}/icons/${ICON}`);
         super({
             title: APP_NAME,
-            subtitle: 'Send',
+            subtitle: 'Open',
             gicon,
             toggleMode: false,
         });
@@ -70,7 +70,7 @@ class LookitTileToggle extends QuickSettings.QuickMenuToggle {
         this._clearId = 0;
         this._raiseId = 0;
 
-        this.menu.setHeader(gicon, APP_NAME, 'Send text');
+        this.menu.setHeader(gicon, APP_NAME, 'Open a file by its path');
 
         // ── the line ───────────────────────────────────────────────────────
         const lineItem = new PopupMenu.PopupBaseMenuItem({
@@ -79,7 +79,7 @@ class LookitTileToggle extends QuickSettings.QuickMenuToggle {
             style_class: 'lookit-tile-item',
         });
         this._entry = new St.Entry({
-            hint_text: 'Type or paste here…',
+            hint_text: 'Paste a file path or file:// link…',
             can_focus: true,
             x_expand: true,
             style_class: 'lookit-tile-entry',
@@ -101,9 +101,9 @@ class LookitTileToggle extends QuickSettings.QuickMenuToggle {
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         // ── without pasting ────────────────────────────────────────────────
-        this.menu.addAction('Send clipboard',
+        this.menu.addAction('Open path on the clipboard',
             () => this._fromClipboard(St.ClipboardType.CLIPBOARD, 'clipboard'));
-        this.menu.addAction('Send selected text',
+        this.menu.addAction('Open selected path',
             () => this._fromClipboard(St.ClipboardType.PRIMARY, 'selection'));
         this.menu.addAction(`Open ${APP_NAME}`, () => this._openApp());
 

@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Lookit resource bundle. The resource-pipeline paradigm: an app asset carried
-     the symbolic way (a currentColor SVG under the freedesktop icon-theme shape)
-     so set_icon_name("lookit-logo-symbolic") resolves it out of the compiled-in
-     binary and GTK recolours it to the theme foreground -- no icon installed on
-     the user's disk.
-
-     Gotcha the shape encodes: GTK's icon lookup is RIGID about the trailing
-     .../scalable/apps/ path, so the prefix ends there and App::on_activate
-     passes only /io/github/scott8420/Lookit/icons to add_resource_path (GTK appends
-     scalable/apps/ itself). The prefix mirrors the app-id; both move together in
-     a one-pass rename. See docs/resources-and-dialog-lifetime.md. -->
+<!-- Lookit's icons, compiled into the binary. GTK's icon lookup wants the
+     trailing .../scalable/apps/, so the prefix ends there and App passes only
+     /io/github/scott8420/Lookit/icons to add_resource_path. The SVGs are made
+     by tools/lookit_logo.py. (docs/resources-and-dialog-lifetime.md) -->
 <gresources>
   <gresource prefix="/io/github/scott8420/Lookit/icons/scalable/apps">
-    <file preprocess="xml-stripblanks" alias="lookit-logo-symbolic.svg">icons/scalable/apps/lookit-logo-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="io.github.scott8420.Lookit.svg">icons/scalable/apps/io.github.scott8420.Lookit.svg</file>
+    <file preprocess="xml-stripblanks" alias="io.github.scott8420.Lookit-symbolic.svg">icons/scalable/apps/io.github.scott8420.Lookit-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-home-symbolic.svg">icons/scalable/apps/lookit-home-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-view-symbolic.svg">icons/scalable/apps/lookit-view-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-book-symbolic.svg">icons/scalable/apps/lookit-book-symbolic.svg</file>
   </gresource>
 </gresources>

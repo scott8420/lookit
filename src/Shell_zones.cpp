@@ -1,75 +1,279 @@
 #include "Shell.hpp"
 #include "Log.hpp"
 
-#include <gtkmm/headerbar.h>
-#include <gtkmm/label.h>
-#include <gtkmm/scrolledwindow.h>
 #include <gtkmm/gestureclick.h>
-#include <gtkmm/gesturedrag.h>
-#include <gtkmm/eventcontrollerfocus.h>
+#include <gtkmm/headerbar.h>
+#include <gtkmm/image.h>
+#include <gtkmm/label.h>
+#include <gtkmm/listboxrow.h>
+#include <gtkmm/scrolledwindow.h>
+#include <gtkmm/separator.h>
 
-// Shell_zones.cpp -- ZONES. Construction of the named regions: the window frame
-// and header, the sidebar+stack body, the pattern pages, and the menu model.
+// Shell_zones.cpp -- ZONES. Construction of the named regions: the frame and
+// header, the sidebar, the Home and View pages, the drawers, the menu model.
 
 namespace lookit {
 
-void Shell::build_shell() {  // zone: window + sidebar + stack
+void Shell::build_shell() {  // zone: window, header, sidebar, overlay
     set_title("Lookit");
-    set_default_size(760, 520);
+    set_default_size(1100, 760);
 
     auto header = Gtk::make_managed<Gtk::HeaderBar>();
-
-    // Brand logo at the start: a frameless button whose icon is a symbolic
-    // resource resolved from the compiled-in bundle (App registers it), so this
-    // one button exercises the resource pipeline. Click opens the About window
-    // (the dialog-lifetime exemplar).
-    m_logo_button.set_icon_name("lookit-logo-symbolic");
+    {
+        auto* img = Gtk::make_managed<Gtk::Image>();
+        img->set_from_icon_name("io.github.scott8420.Lookit-symbolic");
+        img->set_pixel_size(22);
+        m_logo_button.set_child(*img);
+    }
     m_logo_button.set_has_frame(false);
     m_logo_button.set_tooltip_text("About Lookit");
     m_logo_button.set_action_name("win.about");
     header->pack_start(m_logo_button);
+
+    auto* open = Gtk::make_managed<Gtk::Button>();
+    open->set_icon_name("document-open-symbolic");
+    open->set_tooltip_text("Open… (Ctrl+O)");
+    open->set_action_name("win.open");
+    header->pack_start(*open);
 
     m_menu_button.set_icon_name("open-menu-symbolic");
     m_menu_button.set_menu_model(build_menu());
     header->pack_end(m_menu_button);
     set_titlebar(*header);
 
-    // StackSidebar drives the Stack: adding a page with a title makes a sidebar
-    // row automatically. That IS the Stack/StackSidebar paradigm -- no manual
-    // row wiring.
-    m_sidebar.set_stack(m_stack);
-    m_sidebar.set_size_request(160, -1);
+    // The Rouster skin (Css.hpp): .lookit always, .page-<name> for the tint.
+    // The stack is the one truth for "which page": rows ask it to move, and
+    // on_page_changed follows it back to the row and the tint.
+    add_css_class("lookit");
+    build_sidebar();
     m_stack.set_hexpand(true);
     m_stack.set_vexpand(true);
+    m_stack.set_transition_type(Gtk::StackTransitionType::CROSSFADE);
+    m_stack.set_transition_duration(160);
+    m_stack.property_visible_child_name().signal_changed().connect(
+        sigc::mem_fun(*this, &Shell::on_page_changed));
 
-    build_drawers();          // the stack becomes the overlay's base
-    m_body.append(m_sidebar);
+    build_drawers();   // the stack becomes the overlay's base
+
+    // The toast: a message pill at the bottom, over everything but the drawers.
+    m_toast_label.set_wrap(true);
+    m_toast_label.set_max_width_chars(70);
+    m_toast.set_child(m_toast_label);
+    m_toast_label.add_css_class("toast");
+    m_toast.set_transition_type(Gtk::RevealerTransitionType::SLIDE_UP);
+    m_toast.set_halign(Gtk::Align::CENTER);
+    m_toast.set_valign(Gtk::Align::END);
+    m_toast.set_can_target(false);
+    m_overlay.add_overlay(m_toast);
+
+    m_body.append(m_side);
     m_body.append(m_overlay);
     set_child(m_body);
 }
 
+void Shell::build_sidebar() {  // zone: brand + nav rows
+    m_side.add_css_class("sidebar-pane");
+    m_side.set_size_request(180, -1);
+
+    auto brand = Gtk::make_managed<Gtk::Label>("Lookit");
+    brand->add_css_class("sidebar-brand");
+    brand->set_xalign(0.0f);
+    brand->set_margin_top(10);
+    m_side.append(*brand);
+
+    m_nav.set_selection_mode(Gtk::SelectionMode::SINGLE);
+    struct Row { const char* name; const char* icon; const char* label; };
+    for (const Row& r : {Row{"home", "lookit-home-symbolic", "Home"},
+                         Row{"view", "lookit-view-symbolic", "View"}}) {
+        auto row = Gtk::make_managed<Gtk::ListBoxRow>();
+        row->set_name(std::string("nav.") + r.name);
+        auto box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 10);
+        auto img = Gtk::make_managed<Gtk::Image>();
+        img->set_from_icon_name(r.icon);
+        img->set_pixel_size(18);
+        auto lbl = Gtk::make_managed<Gtk::Label>(r.label);
+        lbl->set_xalign(0.0f);
+        box->append(*img);
+        box->append(*lbl);
+        row->set_child(*box);
+        m_nav.append(*row);
+    }
+    m_nav.signal_row_activated().connect([this](Gtk::ListBoxRow* row) {
+        const std::string n = row->get_name();
+        if (n.rfind("nav.", 0) == 0) go(n.substr(4));
+    });
+    m_nav.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
+        if (!row) return;
+        const std::string n = row->get_name();
+        if (n.rfind("nav.", 0) == 0 && n.substr(4) != m_page) go(n.substr(4));
+    });
+    m_nav.set_vexpand(true);
+    m_side.append(m_nav);
+
+    auto foot = Gtk::make_managed<Gtk::Label>("F9 help · Shift+F9 info");
+    foot->add_css_class("sidebar-foot");
+    foot->set_xalign(0.0f);
+    m_side.append(*foot);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// The edge drawers. The content (here the stack) is the overlay's BASE; the
-// drawer parts float on top, so opening one never reshuffles what is under it.
-// Left teaches (hints, rules), right reports (stats, scores) -- the games'
-// convention. Only one opens at a time; core::Drawers owns that rule and
-// apply_drawers paints it. Stacking order, bottom -> top: scrim, tabs,
-// revealers -- an open drawer covers its own tab, and the scrim catches a
-// click anywhere else.
+// Home -- the start page: the glassy logo, one line, the Open button, and the
+// recent files as cards. The hero card is also the drop target's picture: the
+// window takes the drop (bind_drop) and lights the card while a file hovers.
+// ─────────────────────────────────────────────────────────────────────────────
+void Shell::build_home() {  // zone: the hero + recent cards
+    m_home.set_margin(28);
+    m_home.set_margin_top(18);
+
+    m_hero.add_css_class("hero-card");
+    m_hero.set_halign(Gtk::Align::CENTER);
+    m_hero.set_size_request(560, -1);
+    {
+        auto logo = Gtk::make_managed<Gtk::Image>();
+        logo->set_from_icon_name("io.github.scott8420.Lookit");
+        logo->set_pixel_size(112);
+        m_hero.append(*logo);
+        auto title = Gtk::make_managed<Gtk::Label>("Lookit");
+        title->add_css_class("hero-title");
+        m_hero.append(*title);
+        auto sub = Gtk::make_managed<Gtk::Label>("A quick look at PDFs and pictures.");
+        sub->add_css_class("hero-sub");
+        m_hero.append(*sub);
+        auto open = Gtk::make_managed<Gtk::Button>("Open…");
+        open->add_css_class("hero-button");
+        open->set_halign(Gtk::Align::CENTER);
+        open->set_margin_top(10);
+        open->set_action_name("win.open");
+        m_hero.append(*open);
+        auto hint = Gtk::make_managed<Gtk::Label>("or drop a file anywhere on this window");
+        hint->add_css_class("drop-hint");
+        m_hero.append(*hint);
+    }
+    m_home.append(m_hero);
+
+    m_recents_head.set_text("RECENT");
+    m_recents_head.add_css_class("section-head");
+    m_recents_head.set_xalign(0.0f);
+    m_home.append(m_recents_head);
+
+    m_recents_flow.add_css_class("recents");
+    m_recents_flow.set_selection_mode(Gtk::SelectionMode::NONE);
+    m_recents_flow.set_homogeneous(true);
+    m_recents_flow.set_max_children_per_line(4);
+    m_recents_flow.set_min_children_per_line(1);
+    m_recents_flow.set_column_spacing(10);
+    m_recents_flow.set_row_spacing(10);
+    m_recents_flow.set_valign(Gtk::Align::START);
+    auto scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
+    scroll->set_child(m_recents_flow);
+    scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    scroll->set_vexpand(true);
+    m_home.append(*scroll);
+
+    m_stack.add(m_home, "home", "Home");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// View -- a floating pill toolbar over the pages. Every control names a win.*
+// action (bind_actions), so the menu, the keys and the buttons are one verb
+// each. sync_view_bar paints the bar back from DocView's getters.
+// ─────────────────────────────────────────────────────────────────────────────
+void Shell::build_view() {  // zone: the toolbar + DocView
+    m_bar.add_css_class("view-bar");
+    m_bar.set_halign(Gtk::Align::CENTER);
+
+    auto icon_button = [](const char* icon, const char* tip, const char* action) {
+        auto b = Gtk::make_managed<Gtk::Button>();
+        b->set_icon_name(icon);
+        b->set_tooltip_text(tip);
+        b->set_action_name(action);
+        return b;
+    };
+    m_doc_name.add_css_class("doc-name");
+    m_doc_name.set_ellipsize(Pango::EllipsizeMode::MIDDLE);
+    m_doc_name.set_max_width_chars(36);
+    m_bar.append(m_doc_name);
+    m_bar.append(*Gtk::make_managed<Gtk::Separator>(Gtk::Orientation::VERTICAL));
+
+    m_pages_group.append(*icon_button("go-up-symbolic", "Previous page", "win.prev-page"));
+    m_page_entry.add_css_class("page-entry");
+    m_page_entry.set_width_chars(4);
+    m_page_entry.set_max_width_chars(5);
+    m_page_entry.set_alignment(1.0f);
+    m_page_entry.set_tooltip_text("Go to page (Ctrl+G)");
+    m_page_entry.signal_activate().connect(sigc::mem_fun(*this, &Shell::on_page_entry));
+    m_pages_group.append(m_page_entry);
+    m_page_of.add_css_class("page-label");
+    m_page_of.set_xalign(0.0f);
+    m_pages_group.append(m_page_of);
+    m_pages_group.append(*icon_button("go-down-symbolic", "Next page", "win.next-page"));
+    m_pages_group.append(*Gtk::make_managed<Gtk::Separator>(Gtk::Orientation::VERTICAL));
+    m_bar.append(m_pages_group);
+
+    m_bar.append(*icon_button("zoom-out-symbolic", "Zoom out (Ctrl+−)", "win.zoom-out"));
+    m_zoom_label.add_css_class("zoom-label");
+    m_zoom_label.set_tooltip_text("Actual size (Ctrl+0)");
+    {
+        auto click = Gtk::GestureClick::create();
+        click->signal_released().connect([this](int, double, double) { activate_action("win.zoom-actual"); });
+        m_zoom_label.add_controller(click);
+    }
+    m_bar.append(m_zoom_label);
+    m_bar.append(*icon_button("zoom-in-symbolic", "Zoom in (Ctrl+=)", "win.zoom-in"));
+
+    m_fit_width.set_icon_name("zoom-fit-best-symbolic");
+    m_fit_width.set_tooltip_text("Fit width (Ctrl+1)");
+    m_fit_width.signal_toggled().connect([this] {
+        if (!m_syncing && m_fit_width.get_active()) activate_action("win.fit-width");
+        else if (!m_syncing) sync_view_bar();
+    });
+    m_bar.append(m_fit_width);
+    m_fit_page.set_icon_name("view-fullscreen-symbolic");
+    m_fit_page.set_tooltip_text("Fit page (Ctrl+2)");
+    m_fit_page.signal_toggled().connect([this] {
+        if (!m_syncing && m_fit_page.get_active()) activate_action("win.fit-page");
+        else if (!m_syncing) sync_view_bar();
+    });
+    m_bar.append(m_fit_page);
+    // Book view: a stateful action, so this button and the menu's check mark
+    // both follow its state with no syncing of ours.
+    m_book.set_icon_name("lookit-book-symbolic");
+    m_book.set_tooltip_text("Book view -- spreads, page 1 on the right (Ctrl+B)");
+    m_book.set_action_name("win.book");
+    m_bar.append(m_book);
+    m_bar.append(*Gtk::make_managed<Gtk::Separator>(Gtk::Orientation::VERTICAL));
+    m_bar.append(*icon_button("dialog-information-symbolic", "Info (Shift+F9)", "win.toggle-right-drawer"));
+
+    m_view.append(m_bar);
+
+    // Empty state: what View says with nothing open.
+    m_view_empty.set_text("Nothing open. Ctrl+O, or drop a file here.");
+    m_view_empty.add_css_class("view-empty");
+    m_view_empty.set_vexpand(true);
+    m_view.append(m_view_empty);
+    m_view.append(m_doc_view);
+    m_doc_view.set_visible(false);
+    m_doc_view.signal_changed().connect(sigc::mem_fun(*this, &Shell::sync_view_bar));
+
+    m_stack.add(m_view, "view", "View");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The edge drawers (Cairn's stone). The stack is the overlay's BASE; the
+// drawers float over it. Left = help, right = info about the open file.
+// Stacking, bottom -> top: scrim, tabs, revealers.
 // ─────────────────────────────────────────────────────────────────────────────
 void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
     m_overlay.set_child(m_stack);
     m_overlay.set_hexpand(true);
     m_overlay.set_vexpand(true);
 
-    // Left: the hints drawer. A real app replaces the panel's contents; the
-    // revealer, the tab, the scrim and the keys stay as they are.
-    m_left_panel.add_css_class("background");   // opaque, from the theme
+    m_left_panel.add_css_class("background");
     m_left_panel.add_css_class("drawer-panel");
     m_left_panel.add_css_class("left");
-    m_left_panel.set_size_request(260, -1);
+    m_left_panel.set_size_request(280, -1);
     {
-        auto title = Gtk::make_managed<Gtk::Label>("Hints");
+        auto title = Gtk::make_managed<Gtk::Label>("Help");
         title->set_xalign(0.0f);
         title->add_css_class("title-4");
         auto body = Gtk::make_managed<Gtk::Label>();
@@ -78,9 +282,15 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
         body->set_yalign(0.0f);
         body->set_vexpand(true);
         body->set_markup(
-            "Hidden until you want it. Open with the left edge tab, <b>F9</b>, or "
-            "the menu; close with <b>Esc</b>, a click outside, or the same key.\n\n"
-            "In a game this is where the rules and the live hints live.");
+            "<b>Open</b> with Ctrl+O, a drop, Files, or the quick-settings tile.\n\n"
+            "<b>Read:</b> Space / Shift+Space page down / up, Home / End, "
+            "← → a page at a time, Ctrl+G go to a page.\n\n"
+            "<b>Book view</b> (Ctrl+B): facing pages like a printed book -- "
+            "page 1 alone on the right, then 2|3, 4|5 ...\n\n"
+            "<b>Zoom:</b> Ctrl+= / Ctrl+−, Ctrl+0 actual size, Ctrl+1 fit width, "
+            "Ctrl+2 fit page -- or Ctrl+wheel, or pinch.\n\n"
+            "<b>Info</b> about the file: Shift+F9.\n\n"
+            "All keys: Ctrl+?");
         m_left_panel.append(*title);
         m_left_panel.append(*body);
     }
@@ -91,22 +301,22 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
     m_left_drawer.set_valign(Gtk::Align::FILL);
     m_left_drawer.set_reveal_child(false);
 
-    // Right: the report drawer. It refreshes each time it opens
-    // (refresh_right_drawer) -- the report is read on demand, not kept live.
     m_right_panel.add_css_class("background");
     m_right_panel.add_css_class("drawer-panel");
     m_right_panel.add_css_class("right");
-    m_right_panel.set_size_request(260, -1);
+    m_right_panel.set_size_request(280, -1);
     {
-        auto title = Gtk::make_managed<Gtk::Label>("Report");
+        auto title = Gtk::make_managed<Gtk::Label>("Info");
         title->set_xalign(0.0f);
         title->add_css_class("title-4");
-        m_right_report.set_wrap(true);
-        m_right_report.set_xalign(0.0f);
-        m_right_report.set_yalign(0.0f);
-        m_right_report.set_vexpand(true);
+        m_info.set_wrap(true);
+        m_info.set_wrap_mode(Pango::WrapMode::WORD_CHAR);
+        m_info.set_xalign(0.0f);
+        m_info.set_yalign(0.0f);
+        m_info.set_vexpand(true);
+        m_info.set_selectable(true);
         m_right_panel.append(*title);
-        m_right_panel.append(m_right_report);
+        m_right_panel.append(m_info);
     }
     m_right_drawer.set_child(m_right_panel);
     m_right_drawer.set_transition_type(Gtk::RevealerTransitionType::SLIDE_LEFT);
@@ -115,7 +325,6 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
     m_right_drawer.set_valign(Gtk::Align::FILL);
     m_right_drawer.set_reveal_child(false);
 
-    // The scrim: transparent, full size, shown only while a drawer is open.
     m_scrim.add_css_class("drawer-scrim");
     m_scrim.set_hexpand(true);
     m_scrim.set_vexpand(true);
@@ -126,19 +335,17 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
         m_scrim.add_controller(click);
     }
 
-    // The tabs: plain buttons; their invisible-until-hover look is pure CSS.
-    m_left_tab.set_label("\u203A");    // ›
+    m_left_tab.set_label("›");
     m_left_tab.add_css_class("drawer-tab");
     m_left_tab.set_halign(Gtk::Align::START);
     m_left_tab.set_valign(Gtk::Align::CENTER);
-    m_left_tab.set_tooltip_text("Hints (F9)");
+    m_left_tab.set_tooltip_text("Help (F9)");
     m_left_tab.set_action_name("win.toggle-left-drawer");
-
-    m_right_tab.set_label("\u2039");   // ‹
+    m_right_tab.set_label("‹");
     m_right_tab.add_css_class("drawer-tab-right");
     m_right_tab.set_halign(Gtk::Align::END);
     m_right_tab.set_valign(Gtk::Align::CENTER);
-    m_right_tab.set_tooltip_text("Report (Shift+F9)");
+    m_right_tab.set_tooltip_text("Info (Shift+F9)");
     m_right_tab.set_action_name("win.toggle-right-drawer");
 
     m_overlay.add_overlay(m_scrim);
@@ -148,214 +355,32 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
     m_overlay.add_overlay(m_right_drawer);
 }
 
-void Shell::build_pages() {  // zone: the pattern pages
-    // Page 1 -- Recents: a live list + explanation. The menu's Open-recent
-    // submenu and this list are the same data, two surfaces (CANON: two
-    // surfaces, one mechanism).
-    auto intro = Gtk::make_managed<Gtk::Label>();
-    intro->set_wrap(true);
-    intro->set_xalign(0.0f);
-    intro->set_margin(12);
-    intro->set_markup(
-        "<b>Recent menu</b> -- actions + a JSON pump, composed.\n\n"
-        "Use the menu (top-right) -> \"Remember a folder...\" to add one. It "
-        "appears here and under \"Open recent\", persists to a JSON file in the "
-        "XDG data dir, and prunes entries whose folder has since vanished.\n\n"
-        "The list is core data; the UI resolves the path and drives the menu. "
-        "See docs/two-layer-seam.md and core/Recents.hpp.");
-    m_recents_page.append(*intro);
-
-    m_recents_list.set_selection_mode(Gtk::SelectionMode::NONE);
-    m_recents_scroll.set_child(m_recents_list);
-    m_recents_scroll.set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
-    m_recents_scroll.set_vexpand(true);
-    m_recents_page.append(m_recents_scroll);
-    m_stack.add(m_recents_page, "recents", "Recent menu");
-
-    // Page 2 -- Registry: the debuggability payoff. The button dumps the live
-    // name->widget tree to the log (also callable from gdb as registry::dump()).
-    auto reg = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 12);
-    reg->set_margin(12);
-    auto reg_intro = Gtk::make_managed<Gtk::Label>();
-    reg_intro->set_wrap(true);
-    reg_intro->set_xalign(0.0f);
-    reg_intro->set_markup(
-        "<b>Registry</b> -- the live address book Named&lt;W&gt; fills.\n\n"
-        "Every widget here was named at construction and registered by "
-        "Named&lt;W&gt;. \"Dump\" prints the live tree -- the same call is your "
-        "friend in gdb when a backtrace frame is otherwise a bare pointer. See "
-        "docs/widget-naming.md for why this is the LIGHT half of naming.");
-    auto dump_btn = Gtk::make_managed<Gtk::Button>("Dump registry to the log");
-    dump_btn->set_halign(Gtk::Align::START);
-    dump_btn->set_action_name("win.dump-registry");
-    reg->append(*reg_intro);
-    reg->append(*dump_btn);
-    m_stack.add(*reg, "registry", "Registry");
-
-    build_undo_page();   // s046
-    build_tile_page();   // the quick-settings-tile stone
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The Tile page -- the quick-settings-tile stone's visible end. Whatever the
-// tile (or `lookit --send`) hands over lands here, newest first. An app seeded
-// from Lookit replaces this page with its real destination (jot: the Inbox;
-// Fowler: the Check page) and keeps App's two actions as they are.
-void Shell::build_tile_page() {  // zone: the Tile page
-    m_tile_page.set_margin(12);
-    auto intro = Gtk::make_managed<Gtk::Label>();
-    intro->set_wrap(true);
-    intro->set_xalign(0.0f);
-    intro->set_markup(
-        "<b>Quick-settings tile</b> -- text from outside the window.\n\n"
-        "Install with <tt>./install.sh</tt>, log out and in, and a Lookit tile "
-        "sits in GNOME's quick settings: type or paste a line, press Enter, or "
-        "send the clipboard / the selection. It arrives here over D-Bus "
-        "(<tt>app.receive-text</tt>), starting Lookit first if it was closed.\n\n"
-        "Same door from a terminal: <tt>lookit --send \"hello\"</tt>. "
-        "See docs/quick-settings-tile.md.");
-    m_tile_page.append(*intro);
-
-    m_tile_said.set_xalign(0.0f);
-    m_tile_said.set_wrap(true);
-    m_tile_said.set_text("Nothing has arrived yet.");
-    m_tile_page.append(m_tile_said);
-
-    m_tile_list.set_selection_mode(Gtk::SelectionMode::NONE);
-    auto scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
-    scroll->set_child(m_tile_list);
-    scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
-    scroll->set_vexpand(true);
-    m_tile_page.append(*scroll);
-    m_stack.add(m_tile_page, "tile", "Tile");
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The Undo page (s046) -- the undo stone, exercised. A list of stones; every
-// button, the name field and the size slider are user choices, and every one
-// is a step (core/Undo.hpp, docs/undo.md). Try: delete a stone and press
-// Ctrl+Z without clicking anything; drag the slider and undo once; tap the
-// arrow keys on the slider and undo once.
-// ─────────────────────────────────────────────────────────────────────────────
-void Shell::build_undo_page() {  // zone: the Undo page
-    m_undo_page.set_margin(12);
-
-    auto intro = Gtk::make_managed<Gtk::Label>();
-    intro->set_wrap(true);
-    intro->set_xalign(0.0f);
-    intro->set_markup(
-        "<b>Undo</b> -- every user choice is a step, through one door.\n\n"
-        "Add, delete, move, rename, resize: <b>Ctrl+Z</b> takes any of them back, "
-        "from anywhere but a text box (the name field keeps its own). A slider "
-        "<i>drag</i> is one step; arrow presses within 1.5 s merge into one. See "
-        "core/Undo.hpp and docs/undo.md.");
-    m_undo_page.append(*intro);
-
-    // Verbs.
-    auto verbs = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
-    const auto verb = [&](const char* label, const char* action, const char* name) {
-        auto b = Gtk::make_managed<Gtk::Button>(label);
-        b->set_name(name);
-        b->set_action_name(action);
-        verbs->append(*b);
-    };
-    verb("Add", "win.stone-add", "shell.undo.add");
-    verb("Delete", "win.stone-delete", "shell.undo.delete");
-    verb("Up", "win.stone-up", "shell.undo.up");
-    verb("Down", "win.stone-down", "shell.undo.down");
-    auto spacer = Gtk::make_managed<Gtk::Box>();
-    spacer->set_hexpand(true);
-    verbs->append(*spacer);
-    m_undo_button.set_label("Undo");
-    m_undo_button.set_action_name("win.undo");
-    m_redo_button.set_label("Redo");
-    m_redo_button.set_action_name("win.redo");
-    verbs->append(m_undo_button);
-    verbs->append(m_redo_button);
-    m_undo_page.append(*verbs);
-
-    // The list.
-    auto scroll = Gtk::make_managed<Gtk::ScrolledWindow>();
-    scroll->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
-    scroll->set_vexpand(true);
-    scroll->set_child(m_stone_list);
-    m_stone_list.set_selection_mode(Gtk::SelectionMode::SINGLE);
-    m_stone_list.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
-        if (m_painting) return;
-        m_sel = row ? std::string(row->get_name()) : std::string{};
-        repaint_stones();   // the detail fields follow the selection
-    });
-    m_undo_page.append(*scroll);
-
-    // Detail: name + size.
-    auto detail = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
-    auto nl = Gtk::make_managed<Gtk::Label>("Name");
-    m_stone_name.set_hexpand(true);
-    m_stone_name.set_valign(Gtk::Align::CENTER);
-    m_stone_name.signal_activate().connect(sigc::mem_fun(*this, &Shell::on_stone_rename));
-    auto leave = Gtk::EventControllerFocus::create();
-    leave->signal_leave().connect(sigc::mem_fun(*this, &Shell::on_stone_rename));
-    m_stone_name.add_controller(leave);
-    auto sl = Gtk::make_managed<Gtk::Label>("Size");
-    m_stone_size.set_range(1, 10);
-    m_stone_size.set_increments(1, 1);
-    m_stone_size.set_digits(0);
-    m_stone_size.set_round_digits(0);
-    m_stone_size.set_draw_value(true);
-    m_stone_size.set_size_request(180, -1);
-    m_stone_size.set_valign(Gtk::Align::CENTER);
-    m_stone_size.signal_value_changed().connect(sigc::mem_fun(*this, &Shell::on_stone_size));
-    // A drag is ONE step: open the gesture at press, close it at release.
-    // CAPTURE, so it sees the press before the slider's own gesture claims
-    // it; a claimed sequence arrives here as cancel -- also the end.
-    auto drag = Gtk::GestureDrag::create();
-    drag->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
-    drag->signal_drag_begin().connect([this](double, double) {
-        if (!m_sel.empty()) core::stones::drag_begin(m_journal, m_stones, m_sel);
-    });
-    const auto end = [this]() { core::stones::drag_end(m_journal); };
-    drag->signal_drag_end().connect([end](double, double) { end(); });
-    drag->signal_cancel().connect([end](const Gdk::EventSequence*) { end(); });
-    m_stone_size.add_controller(drag);
-    detail->append(*nl);
-    detail->append(m_stone_name);
-    detail->append(*sl);
-    detail->append(m_stone_size);
-    m_undo_page.append(*detail);
-
-    m_undo_said.set_xalign(0.0f);
-    m_undo_said.add_css_class("dim-label");
-    m_undo_page.append(m_undo_said);
-
-    m_stack.add(m_undo_page, "undo", "Undo");
-}
-
 Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     auto menu = Gio::Menu::create();
 
     auto file = Gio::Menu::create();
-    file->append("Remember a folder\u2026", "win.pick-folder");
+    file->append("Open…", "win.open");
     m_recents_menu = Gio::Menu::create();
-    file->append_submenu("Open recent", m_recents_menu);
+    file->append_submenu("Open Recent", m_recents_menu);
     menu->append_section(file);
 
-    // s046: Undo / Redo, re-labelled live ("Undo Delete “Jade”") and greyed
-    // when there is nothing to do -- update_undo_ui() owns this section.
-    m_edit_menu = Gio::Menu::create();
-    m_edit_menu->append("Undo", "win.undo");
-    m_edit_menu->append("Redo", "win.redo");
-    menu->append_section(m_edit_menu);
-
     auto view = Gio::Menu::create();
-    view->append("Hints drawer", "win.toggle-left-drawer");
-    view->append("Report drawer", "win.toggle-right-drawer");
+    view->append("Zoom In", "win.zoom-in");
+    view->append("Zoom Out", "win.zoom-out");
+    view->append("Actual Size", "win.zoom-actual");
+    view->append("Fit Width", "win.fit-width");
+    view->append("Fit Page", "win.fit-page");
+    view->append("Book View", "win.book");
+    view->append("Go to Page…", "win.go-to-page");
     menu->append_section(view);
 
-    auto diag = Gio::Menu::create();
-    diag->append("Dump registry", "win.dump-registry");
-    menu->append_section(diag);
+    auto panels = Gio::Menu::create();
+    panels->append("Help", "win.toggle-left-drawer");
+    panels->append("Info", "win.toggle-right-drawer");
+    menu->append_section(panels);
 
     auto app = Gio::Menu::create();
+    app->append("Keyboard Shortcuts", "win.shortcuts");
     app->append("About Lookit", "win.about");
     app->append("Quit", "win.quit");
     menu->append_section(app);

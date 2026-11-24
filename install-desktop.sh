@@ -19,7 +19,7 @@ set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 APP_ID="io.github.scott8420.Lookit"
-LOGO="resources/icons/scalable/apps/lookit-logo-symbolic.svg"
+LOGO="resources/icons/scalable/apps/io.github.scott8420.Lookit-symbolic.svg"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 APPS="$DATA/applications"
 ICONS="$DATA/icons/hicolor/scalable/apps"
@@ -44,10 +44,8 @@ fi
 mkdir -p "$APPS" "$ICONS" "$SYMBOLIC" "$SERVICES"
 sed "s|@EXEC@|$APP_EXEC|g" "data/$APP_ID.desktop.in" > "$APPS/$APP_ID.desktop"
 sed "s|@EXEC@|$APP_EXEC|g" "data/$APP_ID.service.in" > "$SERVICES/$APP_ID.service"
-# A colour app icon goes in data/$APP_ID.svg when the app has one; until then
-# the symbolic logo stands in for both.
-if [ -f "data/$APP_ID.svg" ]; then cp "data/$APP_ID.svg" "$ICONS/$APP_ID.svg"
-else                              cp "$LOGO" "$ICONS/$APP_ID.svg"; fi
+# The glassy colour logo (tools/lookit_logo.py makes both).
+cp "resources/icons/scalable/apps/$APP_ID.svg" "$ICONS/$APP_ID.svg"
 cp "$LOGO" "$SYMBOLIC/$APP_ID-symbolic.svg"
 
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true

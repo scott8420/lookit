@@ -16,6 +16,7 @@ protected:
     App();
     void on_activate() override;
     void on_startup() override;   // accelerators, driven from core::shortcut_registry()
+    void on_open(const Gio::Application::type_vec_files& files, const Glib::ustring& hint) override;
 
 private:
     // The QUICK-SETTINGS-TILE stone: text from outside -- the tile (D-Bus

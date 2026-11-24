@@ -21,7 +21,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 APP_ID="io.github.scott8420.Lookit"
 UUID="lookit-tile@scott8420.github.io"
-LOGO="resources/icons/scalable/apps/lookit-logo-symbolic.svg"
+LOGO="resources/icons/scalable/apps/io.github.scott8420.Lookit-symbolic.svg"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 DEST="$DATA/gnome-shell/extensions/$UUID"
 

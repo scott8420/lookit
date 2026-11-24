@@ -10,6 +10,8 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
+# PDFs: poppler-glib (Fedora: poppler-glib-devel; Ubuntu: libpoppler-glib-dev).
+pkg_check_modules(POPPLER REQUIRED poppler-glib)
 find_package(spdlog REQUIRED)
 
 # ── lookit_core -- the GTK-free core (the model side of the one real seam) ──────
@@ -32,6 +34,9 @@ add_library(lookit_core STATIC
     # cleaned and capped on arrival, the C++ twin of the tile's lib.js.
     # docs/quick-settings-tile.md.
     src/core/TileText.cpp
+    # Lookit: where pages sit + the zoom ladder; what a file is.
+    src/core/Layout.cpp
+    src/core/FileKind.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
@@ -78,6 +83,8 @@ add_executable(lookit
     # and we do not link libadwaita). Needs no new dependency: the D-Bus and
     # GSettings calls are GIO, which gtkmm-4.0 already brings in.
     src/Appearance.cpp
+    src/Document.cpp
+    src/DocView.cpp
     src/Shell.cpp
     src/Shell_zones.cpp
     src/Shell_bindings.cpp
@@ -88,7 +95,7 @@ add_executable(lookit
     src/Registry.cpp
     src/Log.cpp
 )
-target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS})
-target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} lookit_core spdlog::spdlog)
-target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS})
+target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS})
+target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS})
 target_compile_options(lookit    PRIVATE ${GTKMM_CFLAGS_OTHER})

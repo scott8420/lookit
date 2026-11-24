@@ -18,9 +18,13 @@
 #include "core/Undo.hpp"
 #include "core/TextMap.hpp"
 #include "core/TileText.hpp"
+#include "core/Layout.hpp"
+#include "core/FileKind.hpp"
+#include <cmath>
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -453,6 +457,144 @@ int main() {
         }
         check("tile: the cap counts characters, not bytes",
               tile::codepoints("\xc3\xa9t\xc3\xa9") == 3);   // "été"
+    }
+
+
+    // ── Lookit: the page layout + the zoom ladder ───────────────────────────
+    {
+        namespace L = core::layout;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+        const std::vector<L::Size> letter3(3, L::Size{612, 792});
+        auto p = L::place(letter3, 1.0, 1000);
+        check("layout: content width = viewport when pages are narrower", near(p.width, 1000));
+        check("layout: pages centred", near(p.pages[0].x, std::floor((1000 - 612) / 2.0)));
+        check("layout: first page a margin down", near(p.pages[0].y, L::kMargin));
+        check("layout: pages a gap apart", near(p.pages[1].y, p.pages[0].y + 792 + L::kGap));
+        check("layout: height = margins + pages + gaps",
+              near(p.height, 2 * L::kMargin + 3 * 792 + 2 * L::kGap));
+        auto wide = L::place(letter3, 2.0, 800);
+        check("layout: content widens past the viewport when zoomed", near(wide.width, 1224 + 2 * L::kMargin));
+        check("layout: a wide page starts at the margin", near(wide.pages[0].x, L::kMargin));
+        auto v = L::visible(p, 0, 500);
+        check("layout: top of the view shows page 1 only", v.first == 0 && v.second == 0);
+        v = L::visible(p, 800, 900);
+        check("layout: a gap straddle shows both neighbours", v.first == 0 && v.second == 1);
+        v = L::visible(p, 1e6, 1e6 + 100);
+        check("layout: past the end shows nothing", v.first == -1);
+        check("layout: nothing visible in an empty doc", L::visible(L::place({}, 1, 800), 0, 100).first == -1);
+        check("layout: page_at the middle of page 2", L::page_at(p, p.pages[1].y + 400) == 1);
+        check("layout: page_at in a gap picks the nearer page",
+              L::page_at(p, p.pages[0].y + 792 + 2) == 0 && L::page_at(p, p.pages[1].y - 2) == 1);
+        check("layout: page_at in an empty doc is -1", L::page_at(L::place({}, 1, 800), 10) == -1);
+        check("layout: fit width fills the viewport less margins",
+              near(L::fit_width(letter3, 660), (660 - 2 * L::kMargin) / 612.0));
+        {
+            const std::vector<L::Size> mixed{{612, 792}, {1224, 792}};
+            check("layout: fit width follows the widest page",
+                  near(L::fit_width(mixed, 1272), (1272 - 2 * L::kMargin) / 1224.0));
+        }
+        check("layout: fit page takes the tighter side",
+              near(L::fit_page(letter3, 0, 2000, 840), (840 - 2 * L::kMargin) / 792.0));
+        check("layout: fit with no room is 100%, not zero or negative", near(L::fit_width(letter3, 10), 1.0));
+        check("layout: zoom in from 100% -> 125%", near(L::zoom_in(1.0), 1.25));
+        check("layout: zoom out from 100% -> 90%", near(L::zoom_out(1.0), 0.9));
+        check("layout: zoom in from between steps goes to the next step", near(L::zoom_in(1.1), 1.25));
+        check("layout: the ladder stops at its ends",
+              near(L::zoom_in(8.0), 8.0) && near(L::zoom_out(0.25), 0.25));
+        check("layout: clamp keeps scale sane",
+              near(L::clamp_scale(100), L::kMaxScale) && near(L::clamp_scale(0), 1.0) &&
+              near(L::clamp_scale(-3), 1.0));
+    }
+
+
+    // ── Lookit: Book view -- spreads like a printed book ────────────────────
+    {
+        namespace L = core::layout;
+        using M = L::Mode;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+        auto r5 = L::rows(5, M::Book);
+        check("book: page 1 alone on the right, then 2|3, 4|5",
+              r5.size() == 3 && r5[0].left == -1 && r5[0].right == 0 && r5[1].left == 1 &&
+              r5[1].right == 2 && r5[2].left == 3 && r5[2].right == 4);
+        auto r4 = L::rows(4, M::Book);
+        check("book: an even last page sits alone on the left",
+              r4.size() == 3 && r4[2].left == 3 && r4[2].right == -1);
+        check("book: rows of a one-page doc", L::rows(1, M::Book).size() == 1);
+        check("book: row_of / first_of_row",
+              L::row_of(0, M::Book) == 0 && L::row_of(1, M::Book) == 1 && L::row_of(2, M::Book) == 1 &&
+              L::row_of(3, M::Book) == 2 && L::first_of_row(2, M::Book) == 3 && L::first_of_row(0, M::Book) == 0);
+        check("book: step goes spread to spread",
+              L::step(0, +1, 9, M::Book) == 1 && L::step(1, +1, 9, M::Book) == 3 &&
+              L::step(2, +1, 9, M::Book) == 3 && L::step(3, -1, 9, M::Book) == 1 &&
+              L::step(1, -1, 9, M::Book) == 0);
+        check("book: step stops at the ends",
+              L::step(0, -1, 9, M::Book) == 0 && L::step(8, +1, 9, M::Book) == 7);
+        check("continuous: step is one page", L::step(4, +1, 9, M::Continuous) == 5 &&
+                                              L::step(8, +1, 9, M::Continuous) == 8);
+        const std::vector<L::Size> pg(5, L::Size{600, 800});
+        auto p = L::place(pg, 1.0, 1000, M::Book);
+        const double mid = std::floor(p.width / 2);
+        check("book: the cover starts at the spine, on the right",
+              near(p.pages[0].x, mid + L::kSpine / 2));
+        check("book: a spread meets at the spine",
+              near(p.pages[1].x + p.pages[1].w, mid - L::kSpine / 2) && near(p.pages[2].x, mid + L::kSpine / 2));
+        check("book: facing pages share a row", near(p.pages[1].y, p.pages[2].y) && near(p.pages[3].y, p.pages[4].y));
+        check("book: three rows tall", near(p.height, 2 * L::kMargin + 3 * 800 + 2 * L::kGap));
+        check("book: widens to fit a spread", near(p.width, 1200 + L::kSpine + 2 * L::kMargin));
+        auto v = L::visible(p, p.pages[1].y + 10, p.pages[1].y + 20);
+        check("book: a spread shows both its pages", v.first == 1 && v.second == 2);
+        check("book: fit width fits the spread",
+              near(L::fit_width(pg, 1250, M::Book), (1250 - 2 * L::kMargin - L::kSpine) / 1200.0));
+        check("book: fit width treats the lone cover as half a spread (same scale)",
+              near(L::fit_width(std::vector<L::Size>(1, L::Size{600, 800}), 1250, M::Book),
+                   L::fit_width(std::vector<L::Size>(1, L::Size{600, 800}), 1250, M::Continuous)));
+        {
+            std::vector<L::Size> uneven{{600, 800}, {600, 800}, {600, 500}};
+            auto q = L::place(uneven, 1.0, 1300, M::Book);
+            check("book: a shorter facing page is centred on the row",
+                  near(q.pages[2].y, q.pages[1].y + 150));
+            check("book: page_at finds the taller page when the y misses the shorter one",
+                  L::page_at(q, q.pages[1].y + 20) == 1);
+        }
+    }
+
+    // ── Lookit: what a file is ──────────────────────────────────────────────
+    {
+        using K = core::Kind;
+        check("kind: %PDF magic", core::kind_from_magic("%PDF-1.7\n") == K::Pdf);
+        check("kind: PNG / JPEG / GIF / TIFF magic",
+              core::kind_from_magic("\x89PNG\r\n\x1a\n") == K::Image &&
+              core::kind_from_magic("\xFF\xD8\xFF\xE0") == K::Image &&
+              core::kind_from_magic("GIF89a") == K::Image &&
+              core::kind_from_magic(std::string("II*\0", 4)) == K::Image);
+        check("kind: WEBP and HEIC magic",
+              core::kind_from_magic(std::string("RIFF\x10\0\0\0WEBPVP8 ", 16)) == K::Image &&
+              core::kind_from_magic(std::string("\0\0\0\x18" "ftypheic", 12)) == K::Image);
+        check("kind: DjVu magic", core::kind_from_magic("AT&TFORM\0\0") == K::DjVu);
+        {
+            std::string epub = "PK\x03\x04";
+            epub.resize(30, '\0');
+            epub += "mimetypeapplication/epub+zip";
+            check("kind: EPUB's stored mimetype", core::kind_from_magic(epub) == K::Epub);
+        }
+        check("kind: by name, case-blind",
+              core::kind_from_name("/a/B.PDF") == K::Pdf && core::kind_from_name("x.JpEg") == K::Image &&
+              core::kind_from_name("c.cbz") == K::Cbz && core::kind_from_name("d.djvu") == K::DjVu);
+        check("kind: a dot in a folder name is not an extension",
+              core::kind_from_name("/a.pdf/readme") == K::Unknown);
+        {
+            const auto dir = std::filesystem::temp_directory_path() / "lookit_selftest_kind";
+            std::filesystem::create_directories(dir);
+            const auto liar = (dir / "really_a_png.pdf").string();
+            { std::ofstream(liar, std::ios::binary) << "\x89PNG\r\n\x1a\n rest"; }
+            check("kind: the bytes beat the name (a .pdf that is a PNG)", core::detect(liar) == K::Image);
+            const auto fake_cbz = (dir / "not_a_zip.cbz").string();
+            { std::ofstream(fake_cbz) << "hello"; }
+            check("kind: a .cbz that isn't a zip is Unknown", core::detect(fake_cbz) == K::Unknown);
+            check("kind: a missing file falls back to its name",
+                  core::detect((dir / "missing.pdf").string()) == K::Pdf);
+            std::filesystem::remove_all(dir);
+        }
     }
 
     std::cout << "-----------------------------------------------\n";
