@@ -1,0 +1,21 @@
+/* Lookit Tile -- the quick-settings tile's menu (jot's / Fowler's look). */
+
+.lookit-tile-item {
+    padding: 4px 8px;
+}
+
+.lookit-tile-entry {
+    min-width: 280px;
+    padding: 8px 12px;
+    border-radius: 12px;
+}
+
+.lookit-tile-status {
+    padding: 2px 14px 6px 14px;
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.lookit-tile-status.lookit-tile-error {
+    color: #ff7b63;
+}

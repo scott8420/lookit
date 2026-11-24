@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Lookit: a page behind a loupe. Symbolic: one colour, recoloured by GTK. -->
+  <path fill="currentColor" d="M2.5 1A1.5 1.5 0 0 0 1 2.5v9A1.5 1.5 0 0 0 2.5 13H6v-1.5H2.5v-9h6v2H10V2.5A1.5 1.5 0 0 0 8.5 1z"/>
+  <path fill="currentColor" d="M10.25 5.5a3.75 3.75 0 0 0-3.1 5.86l-2.08 2.08a.75.75 0 1 0 1.06 1.06l2.08-2.08A3.75 3.75 0 1 0 10.25 5.5zm0 1.5a2.25 2.25 0 1 1 0 4.5 2.25 2.25 0 0 1 0-4.5z"/>
+</svg>

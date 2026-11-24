@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Lookit
+GenericName=Document and Image Viewer
+Comment=A quick look at PDFs and pictures
+Exec=@EXEC@
+Icon=io.github.scott8420.Lookit
+Terminal=false
+Categories=Graphics;Viewer;Office;
+StartupNotify=true
+StartupWMClass=io.github.scott8420.Lookit
+DBusActivatable=true
+Actions=send-clipboard;
+
+[Desktop Action send-clipboard]
+Name=Send clipboard
+Exec=@EXEC@ --send-clipboard
