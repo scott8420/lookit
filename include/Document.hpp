@@ -33,7 +33,21 @@ public:
     virtual int count() const = 0;
     virtual core::layout::Size size(int page) const = 0;   // PDF points / image pixels
     // Draw page `page` at the origin of `cr`, `scale` view pixels per unit.
-    virtual void render(cairo_t* cr, int page, double scale) const = 0;
+    // `marks`: with its signatures and markup (thumbnails, export) or without
+    // (the page view draws them itself, so a drag never re-renders paper).
+    virtual void render(cairo_t* cr, int page, double scale, bool marks = true) const = 0;
+
+    // The marks on `page` (core/Marks: the page's UNTURNED frame), the page's
+    // turn, and its unturned size -- what the view needs to draw and drag them.
+    virtual std::vector<core::Mark> marks(int /*page*/) const { return {}; }
+    virtual int turn(int /*page*/) const { return 0; }
+    virtual core::layout::Size base(int page) const { return size(page); }
+    // The text the reader would select dragging from `a` to `b` (unturned
+    // frame), one rectangle per line, unturned. Pictures have none.
+    virtual std::vector<core::layout::Rect> text_rects(int /*page*/, core::marks::Point /*a*/,
+                                                       core::marks::Point /*b*/) const { return {}; }
+    // The page's text, in reading order as the file gives it ("" for pictures).
+    virtual std::string text(int /*page*/) const { return {}; }
     virtual bool opaque() const { return true; }   // paper: draw white under it
     // Every place `text` occurs on `page` (case-blind), in page units, top-left
     // origin. Kinds with no text layer find nothing.
@@ -54,6 +68,6 @@ protected:
 // ARGB32). Capped near `max_pixels`: past that the scale drops to fit. Used by
 // the page view and the thumbnail strip alike.
 Glib::RefPtr<Gdk::Texture> render_texture(const Document& doc, int page, double scale,
-                                          double max_pixels = 16.0e6);
+                                          double max_pixels = 16.0e6, bool marks = true);
 
 }  // namespace lookit

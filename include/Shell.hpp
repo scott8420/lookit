@@ -6,6 +6,10 @@
 #include "core/Pages.hpp"
 
 #include <gtkmm/searchentry.h>
+#include <gtkmm/dropdown.h>
+#include <gtkmm/popover.h>
+#include <gtkmm/textview.h>
+#include <gtkmm/togglebutton.h>
 
 #include <gtkmm/applicationwindow.h>
 #include <giomm/menu.h>
@@ -24,6 +28,8 @@
 //   Handlers -- what a user action does (on_*).             src/Shell_handlers.cpp
 //   Helpers  -- reusable sync: recents, toolbar, toasts.    src/Shell_helpers.cpp
 //   Edit     -- page tools, undo, insert / combine, save.  src/Shell_edit.cpp
+//   Sign     -- signatures on pages; Export (convert).      src/Shell_sign.cpp
+//   Markup   -- the markup bar; making / moving / editing marks.  src/Shell_markup.cpp
 //   Glue     -- ctor + build_ui().                          src/Shell.cpp
 //
 // Finding things
@@ -32,6 +38,9 @@
 //   "Where is the toolbar repainted?" -> Shell_helpers.cpp (sync_view_bar)
 //   "Where do drops land?"            -> Shell_bindings.cpp (bind_drop)
 //   "Where does the tile's text go?"  -> Shell_handlers.cpp (receive_text)
+//   "Where is a signature placed?"    -> Shell_sign.cpp (place_signature)
+//   "Where are pages exported?"       -> Shell_sign.cpp (export_some)
+//   "Where does a new highlight go?"  -> Shell_markup.cpp (on_mark_create)
 //
 // The page names ("home", "view") are the stack's names, the sidebar rows'
 // "nav.<name>", and the window's ".page-<name>" CSS class (Css.hpp gradients).
@@ -40,6 +49,7 @@ namespace lookit {
 
 class AboutWindow;
 class ShortcutsDialog;
+class SignatureDialog;
 
 class Shell : public Gtk::ApplicationWindow {
 public:
@@ -100,6 +110,29 @@ private:
     void on_save_as();                           // category: edit: Ctrl+Shift+S
     bool save_to(const std::string& path);       // category: edit: write, then reopen as clean
     bool on_close_request() override;            // category: edit: unsaved changes? ask
+
+    // ── sign + export (s008) ────────────────────────────────────────────────
+    void bind_sign();                            // category: sign: actions, the export bar, view signals
+    void on_sign();                              // category: sign: Add Signature (draw it first if none)
+    void on_signature();                         // category: sign: Signature... -- draw / import / replace
+    void place_signature(const std::string& art);   // category: sign: onto the page you're on
+    void on_export();                            // category: sign: show the export bar
+    void sync_export_bar();                      // category: sign: formats for this kind; dpi / pages greys
+    void on_export_run();                        // category: sign: ranges + format -> where -> start
+    void start_export(const std::string& target, bool folder);   // category: sign
+    bool export_some();                          // category: sign: one page per idle slice; false = done
+
+    // ── markup (s009) ───────────────────────────────────────────────────────
+    void bind_markup();                          // category: markup: the bar, actions, view signals
+    void on_markup();                            // category: markup: show / hide the bar
+    void set_markup_tool(DocView::Tool t);       // category: markup: a tool button
+    void set_markup_color(std::uint32_t c);      // category: markup: a swatch (recolours a selection)
+    void sync_markup_bar();                      // category: markup: toggles follow the view's tool
+    void on_mark_create(int page, core::Mark m); // category: markup: a new mark (notes / text: edit first)
+    void on_mark_edit(int page, int index, core::Mark m, std::string verb);   // category: markup
+    void on_mark_open(int page, int index);      // category: markup: double-click a note / text
+    void edit_mark_text(int page, int index, core::Mark draft);   // category: markup: the text popover
+    bool delete_selected_mark();                 // category: markup: Delete with a mark selected
 
     // ── helpers ────────────────────────────────────────────────────────────
     std::string recents_file() const;            // category: helper: the XDG path
@@ -192,6 +225,44 @@ private:
     widgets::Box       m_extract_bar;
     widgets::Entry     m_extract_entry;
     widgets::Label     m_extract_msg;
+
+    // Sign + export
+    Glib::RefPtr<Gio::SimpleAction> m_act_sign, m_act_export;
+    widgets::Revealer  m_export_rev;
+    widgets::Box       m_export_bar;
+    Gtk::DropDown      m_export_format;
+    widgets::Entry     m_export_pages;
+    Gtk::DropDown      m_export_dpi;
+    widgets::Label     m_export_msg;
+    struct ExportJob {
+        std::shared_ptr<Document> doc;
+        std::vector<int> pages;
+        int  format = 0;            // exporter::Format
+        int  dpi = 150;
+        std::string target;         // a file, or a folder for many pages
+        bool folder = false;
+        std::string stem;
+        std::size_t next = 0;
+        int  written = 0;
+        std::string last;
+    } m_job;
+    sigc::connection   m_export_idle;
+    std::unique_ptr<SignatureDialog> m_signature;
+
+    // Markup bar
+    Glib::RefPtr<Gio::SimpleAction> m_act_markup;
+    widgets::Revealer  m_markup_rev;
+    widgets::Box       m_markup_bar;
+    std::vector<std::pair<DocView::Tool, Gtk::ToggleButton*>> m_tool_buttons;
+    std::vector<std::pair<std::uint32_t, Gtk::ToggleButton*>> m_swatches;
+    std::uint32_t      m_markup_color = 0;      // 0 = each tool's own default
+    bool               m_markup_syncing = false;
+    // The note / text editor: a popover over the page.
+    std::unique_ptr<Gtk::Popover> m_text_pop;
+    Gtk::TextView*     m_text_view = nullptr;
+    Gtk::Button*       m_text_delete = nullptr;
+    struct TextEdit { int page = -1, index = -1; core::Mark draft; bool open = false; } m_text_edit;
+    void commit_text();                          // category: markup: the popover closed
 
     std::unique_ptr<AboutWindow>     m_about;
     std::unique_ptr<ShortcutsDialog> m_shortcuts;

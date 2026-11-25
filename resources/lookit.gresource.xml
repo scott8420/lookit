@@ -10,5 +10,14 @@
     <file preprocess="xml-stripblanks" alias="lookit-home-symbolic.svg">icons/scalable/apps/lookit-home-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-view-symbolic.svg">icons/scalable/apps/lookit-view-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-book-symbolic.svg">icons/scalable/apps/lookit-book-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-sign-symbolic.svg">icons/scalable/apps/lookit-sign-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-select-symbolic.svg">icons/scalable/apps/lookit-tool-select-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-highlight-symbolic.svg">icons/scalable/apps/lookit-tool-highlight-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-note-symbolic.svg">icons/scalable/apps/lookit-tool-note-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-box-symbolic.svg">icons/scalable/apps/lookit-tool-box-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-ellipse-symbolic.svg">icons/scalable/apps/lookit-tool-ellipse-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-line-symbolic.svg">icons/scalable/apps/lookit-tool-line-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-arrow-symbolic.svg">icons/scalable/apps/lookit-tool-arrow-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-tool-text-symbolic.svg">icons/scalable/apps/lookit-tool-text-symbolic.svg</file>
   </gresource>
 </gresources>

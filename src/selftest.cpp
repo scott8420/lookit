@@ -22,6 +22,10 @@
 #include "core/FileKind.hpp"
 #include "core/Search.hpp"
 #include "core/Pages.hpp"
+#include "core/Sign.hpp"
+#include "core/Marks.hpp"
+#include <set>
+#include <cstdint>
 #include <cmath>
 
 #include <algorithm>
@@ -655,6 +659,64 @@ int main() {
         check("pages: duplicate a page lands right after it",
               P::duplicate(j, pg, pg.id_at(0)) && order() == "0:2^1 0:2^1 1:1 1:2 0:3 0:4 0:5 0:1^3 ");
         check("pages: undo says what it undoes", j.undo_label() == "Duplicate page");
+
+        // ── s008 / s009: marks ride in their page's record ──
+        {
+            const auto id = pg.id_at(2);
+            core::Mark s;
+            s.art = "/sig.png"; s.x = 100; s.y = 600; s.w = 200; s.h = 50;
+            check("sign: add a signature is one step",
+                  P::add_mark(j, pg, id, s) && pg.get(id)->marks.size() == 1 && j.undo_label() == "Add signature");
+            check("sign: no picture, no signature", !P::add_mark(j, pg, id, core::Mark{}));
+            auto moved = s;
+            moved.x = 140;
+            check("sign: move it", P::set_mark(j, pg, id, 0, moved, "Move") &&
+                                   pg.get(id)->marks[0].x == 140 && j.undo_label() == "Move signature");
+            check("sign: setting it to itself is no step", !P::set_mark(j, pg, id, 0, moved, "Move"));
+            check("sign: undo the move", j.undo().done && pg.get(id)->marks[0].x == 100);
+            check("sign: redo the move", j.redo().done && pg.get(id)->marks[0].x == 140);
+            check("sign: a page turn keeps its signature",
+                  P::rotate(j, pg, {id}, 1) && pg.get(id)->marks.size() == 1 && pg.get(id)->turn == 1);
+            j.undo();
+            const int before = pg.count();
+            check("sign: a duplicated page is a signed page",
+                  P::duplicate(j, pg, id) && pg.count() == before + 1 && pg.get(pg.id_at(3))->marks.size() == 1);
+            j.undo();
+            check("sign: deleting the page and undoing brings the signature back",
+                  P::remove(j, pg, {id}) && !pg.get(id) && j.undo().done && pg.get(id)->marks[0].x == 140);
+            check("sign: delete the signature", P::remove_mark(j, pg, id, 0) && pg.get(id)->marks.empty() &&
+                                                j.undo_label() == "Delete signature");
+            check("sign: undo puts it back, exactly", j.undo().done && pg.get(id)->marks.size() == 1 &&
+                                                      pg.get(id)->marks[0] == moved);
+            check("sign: a mark index out of range is refused",
+                  !P::remove_mark(j, pg, id, 3) && !P::set_mark(j, pg, id, -1, s, ""));
+
+            // s009: markup through the same door, labelled by kind.
+            core::Mark arrow;
+            arrow.kind = core::MarkKind::Arrow; arrow.x = 10; arrow.y = 10; arrow.w = -5; arrow.h = 40;
+            check("markup: an arrow (ends may run backwards) is a step",
+                  P::add_mark(j, pg, id, arrow) && j.undo_label() == "Add arrow");
+            core::Mark dot = arrow;
+            dot.w = dot.h = 0;
+            check("markup: a line of no length is refused", !P::add_mark(j, pg, id, dot));
+            auto red = arrow;
+            red.color = 0xe01b24ffu;
+            check("markup: recolour is one step, named",
+                  P::set_mark(j, pg, id, 1, red, "Recolour") && j.undo_label() == "Recolour arrow");
+            core::Mark note;
+            note.kind = core::MarkKind::Note; note.x = 5; note.y = 5; note.w = note.h = 20; note.text = "hi";
+            P::add_mark(j, pg, id, note);
+            auto edited = note;
+            edited.text = "hello";
+            check("markup: edit a note's text", P::set_mark(j, pg, id, 2, edited, "Edit") &&
+                                                 pg.get(id)->marks[2].text == "hello" && j.undo_label() == "Edit note");
+            check("markup: undo the edit", j.undo().done && pg.get(id)->marks[2].text == "hi");
+            check("markup: delete the arrow keeps the order of the rest",
+                  P::remove_mark(j, pg, id, 1) && pg.get(id)->marks.size() == 2 &&
+                  pg.get(id)->marks[1].kind == core::MarkKind::Note && j.undo_label() == "Delete arrow");
+            check("markup: undo puts it back in its place",
+                  j.undo().done && pg.get(id)->marks[1].kind == core::MarkKind::Arrow);
+        }
         check("pages: THE GATE -- no write went around the journal", pg.strays() == 0);
         pg.put(pg.id_at(0), std::nullopt);
         check("pages: the gate catches a write outside the door", pg.strays() == 1);
@@ -681,6 +743,135 @@ int main() {
         check("search: ... turned left", near(t3.x, 20) && near(t3.y, 60) && near(t3.w, 5));
         auto t4 = S::turn_rect(r, 100, 200, 4);
         check("search: four turns is none", near(t4.x, 10) && near(t4.y, 20));
+    }
+
+    // ── Lookit s008 / s009: where a mark sits, and the export arithmetic ─────
+    {
+        namespace G = core::sign;
+        namespace M = core::marks;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+        auto same = [&](const core::layout::Rect& a, const core::layout::Rect& b) {
+            return near(a.x, b.x) && near(a.y, b.y) && near(a.w, b.w) && near(a.h, b.h);
+        };
+        core::Mark s;
+        s.kind = core::MarkKind::Box; s.x = 10; s.y = 20; s.w = 30; s.h = 5;
+        bool round = true, pts = true, vecs = true;
+        for (int t = 0; t < 4; ++t) {
+            const auto v = M::view_box(s, 100, 200, t);
+            round = round && M::with_view_box(s, v, 100, 200, t) == s;
+            const M::Point p{13, 71};
+            const auto q = M::unturn_point(M::turn_point(p, 100, 200, t), 100, 200, t);
+            pts = pts && near(q.x, p.x) && near(q.y, p.y);
+            // a drag on screen moves the mark the same way on screen
+            const auto mv = M::view_box(M::moved(s, 7, -3, t), 100, 200, t);
+            vecs = vecs && near(mv.x, v.x + 7) && near(mv.y, v.y - 3);
+        }
+        check("marks: view_box / with_view_box are inverses at every turn", round);
+        check("marks: turn_point / unturn_point are inverses at every turn", pts);
+        check("marks: a drag moves a mark with the pointer at every turn", vecs);
+        check("marks: a box on a page turned right", same(M::view_box(s, 100, 200, 1), {175, 10, 5, 30}));
+        core::Mark ln;
+        ln.kind = core::MarkKind::Arrow; ln.x = 10; ln.y = 10; ln.w = 20; ln.h = -5;
+        const auto [la, lb] = M::view_line(ln, 100, 200, 1);
+        check("marks: a line's ends turn with the page, the head stays the head",
+              near(la.x, 190) && near(la.y, 10) && near(lb.x, 195) && near(lb.y, 30));
+        const auto back = M::with_view_line(ln, la, lb, 100, 200, 1);
+        check("marks: ... and come back", near(back.x, 10) && near(back.w, 20) && near(back.h, -5));
+        auto p0 = M::signature("/a.png", 300, 100, 612, 792, 0);
+        check("sign: placed a third of the width, centred, two thirds down, upright",
+              near(p0.w, 204) && near(p0.h, 68) && near(p0.x, 204) && near(p0.y, 528 - 34) && p0.turn == 0);
+        auto p1 = M::signature("/a.png", 300, 100, 612, 792, 1);
+        const auto v1 = M::view_box(p1, 612, 792, 1);
+        check("sign: on a page turned right it reads upright to you",
+              M::view_turn(p1, 1) == 0 && near(v1.w, 264) && near(v1.h, 88) && near(v1.x, (792 - 264) / 2.0));
+        auto tall = M::signature("/a.png", 100, 300, 612, 792, 0);
+        check("sign: a tall picture is held to a sixth of the height", near(tall.h, 132) && near(tall.w, 44));
+        auto tx = M::boxed(core::MarkKind::Text, {50, 60, 100, 20}, 0xff, 1, 612, 792, 3);
+        check("markup: text on a page turned left reads upright", M::view_turn(tx, 3) == 0 &&
+                                                               same(M::view_box(tx, 612, 792, 3), {50, 60, 100, 20}));
+        auto hl = M::highlight({{10, 10, 100, 12}, {10, 24, 60, 12}}, {0, 0, 1, 1}, 0xffd400ffu, 612, 792, 0);
+        check("markup: a highlight is its lines, boxed by their union",
+              hl.parts.size() == 2 && same({hl.x, hl.y, hl.w, hl.h}, {10, 10, 100, 26}));
+        auto hl2 = M::highlight({}, {5, 5, 50, 10}, 0xffd400ffu, 612, 792, 0);
+        check("markup: no text under it -> the swept box", hl2.parts.size() == 1 && same(hl2.parts[0], {5, 5, 50, 10}));
+        auto hm = M::moved(hl, 5, 5, 0);
+        check("markup: moving a highlight moves its lines", near(hm.parts[1].x, 15) && near(hm.parts[1].y, 29));
+        auto nt = M::note({600, 790}, "x", 0xffd400ffu, 612, 792, 0);
+        check("markup: a note clicked at the edge stays on the page",
+              near(nt.x, 612 - M::kNoteSize) && near(nt.y, 792 - M::kNoteSize));
+        check("markup: kinds -- what can be sized",
+              !M::resizable(core::MarkKind::Highlight) && !M::resizable(core::MarkKind::Note) &&
+              M::resizable(core::MarkKind::Box) && M::is_line(core::MarkKind::Arrow));
+        check("markup: every kind has a name and a colour",
+              std::string(M::noun(core::MarkKind::Ellipse)) == "ellipse" &&
+              M::default_color(core::MarkKind::Highlight) == M::palette()[0]);
+        const core::layout::Rect b{100, 100, 200, 50};
+        check("sign: move", same(G::move(b, 10, -20, 612, 792), {110, 80, 200, 50}));
+        check("sign: move stays on the page", same(G::move(b, 1000, -1000, 612, 792), {412, 0, 200, 50}));
+        const auto r = G::resize(b, 100, 0, 612, 792);
+        check("sign: resize keeps the aspect", near(r.w, 300) && near(r.h, 75) && near(r.x, 100));
+        check("sign: resize stops at the page edge", near(G::resize(b, 1000, 0, 612, 792).w, 512));
+        check("sign: resize never below the minimum", near(G::resize(b, -1000, -1000, 612, 792).h, 12));
+        check("markup: free resize -- each side its own way",
+              same(G::resize_free(b, 50, -20, 612, 792), {100, 100, 250, 30}) &&
+              near(G::resize_free(b, -1000, 0, 612, 792).w, 6));
+        std::vector<M::Shape> shapes(2);
+        shapes[0].box = {0, 0, 100, 40};
+        shapes[1].box = {50, 20, 100, 40};
+        check("marks: hit the top one first", M::hit(shapes, 60, 30, 9).index == 1);
+        check("marks: hit the corner", M::hit(shapes, 148, 58, 9).part == M::Part::Corner);
+        shapes[1].resizable = false;
+        check("marks: no corner when it can't be sized", M::hit(shapes, 148, 58, 9).part == M::Part::Body);
+        check("marks: a miss", M::hit(shapes, 300, 300, 9).index == -1);
+        std::vector<M::Shape> lines(1);
+        lines[0].line = true; lines[0].a = {0, 0}; lines[0].b = {100, 100}; lines[0].box = {0, 0, 100, 100};
+        check("marks: a line is hit near it, not in its box",
+              M::hit(lines, 52, 48, 5).part == M::Part::Body && M::hit(lines, 80, 20, 5).index == -1);
+        check("marks: a line's ends are handles",
+              M::hit(lines, 1, 1, 5).part == M::Part::Start && M::hit(lines, 99, 98, 5).part == M::Part::End);
+        const auto pd = M::to_pdf({10, 20}, 0, 0, 612, 792, 0);
+        check("save: a note's corner in PDF space (y up)", near(pd.x, 10) && near(pd.y, 772));
+        const auto pc = M::to_pdf({10, 20}, 50, 100, 500, 700, 0);
+        check("save: ... on a cropped page", near(pc.x, 60) && near(pc.y, 680));
+        const auto pr = M::to_pdf({10, 20}, 0, 0, 612, 792, 90);   // seen 792 x 612
+        check("save: ... on a page the file turns right", near(pr.x, 20) && near(pr.y, 10));
+
+        // A scan: white paper, a grey edge, black ink.
+        std::vector<std::uint8_t> px{255, 255, 255, 255,  168, 168, 168, 255,  20, 20, 40, 255,  0, 0, 0, 0};
+        G::ink(px.data(), 4, 1, 16);
+        check("sign: ink -- paper goes clear", px[3] == 0);
+        check("sign: ink -- an edge is half there", px[7] > 60 && px[7] < 200);
+        check("sign: ink -- ink stays solid, its colour kept", px[11] == 255 && px[8] == 20 && px[10] == 40);
+        check("sign: ink -- clear stays clear", px[15] == 0);
+        const auto ib = G::ink_bounds(px.data(), 4, 1, 16);
+        check("sign: ink bounds", near(ib.x, 1) && near(ib.w, 2));
+        std::vector<std::uint8_t> blank(16, 0);
+        check("sign: no ink, no bounds", G::ink_bounds(blank.data(), 4, 1, 16).w == 0);
+    }
+    {
+        namespace C = core::convert;
+        // One ARGB32 pixel per case: opaque red, half-clear (premultiplied) green, clear.
+        const std::uint32_t src[3] = {0xffff0000u, 0x80008000u, 0x00000000u};
+        std::uint8_t out[12];
+        C::argb32_to_rgba(reinterpret_cast<const std::uint8_t*>(src), 12, 3, 1, out, 12, false);
+        check("convert: opaque stays", out[0] == 255 && out[1] == 0 && out[3] == 255);
+        check("convert: half-clear is un-premultiplied", out[5] == 255 && out[7] == 128);
+        check("convert: clear is clear", out[11] == 0);
+        C::argb32_to_rgba(reinterpret_cast<const std::uint8_t*>(src), 12, 3, 1, out, 12, true);
+        check("convert: flattened onto white", out[4] == 127 && out[5] == 255 && out[6] == 127 && out[7] == 255 &&
+                                               out[8] == 255 && out[11] == 255);
+        check("convert: page names pad to the count",
+              C::page_name("Report", 2, 12, "png") == "Report-p03.png" &&
+              C::page_name("Report", 99, 120, "jpg") == "Report-p100.jpg");
+        check("convert: a single page has no number", C::page_name("Card", 0, 1, "png") == "Card.png");
+        std::set<std::string> taken{"/x/a.png", "/x/a (2).png"};
+        auto exists = [&](const std::string& p) { return taken.count(p) > 0; };
+        check("convert: a free name is kept", C::unique_name("/x/b.png", exists) == "/x/b.png");
+        check("convert: a taken name gets a number", C::unique_name("/x/a.png", exists) == "/x/a (3).png");
+        check("convert: a dot in a folder is not an extension",
+              C::unique_name("/x.y/a", [](const std::string& p) { return p == "/x.y/a"; }) == "/x.y/a (2)");
+        const auto px = C::pixels(612, 792, 150);
+        check("convert: Letter at 150 dpi is 1275 x 1650", px.first == 1275 && px.second == 1650);
     }
 
     // ── Lookit: what a file is ──────────────────────────────────────────────

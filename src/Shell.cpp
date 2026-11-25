@@ -1,6 +1,7 @@
 #include "Shell.hpp"
 #include "AboutWindow.hpp"      // complete type for ~unique_ptr<AboutWindow>
 #include "ShortcutsDialog.hpp"
+#include "SignatureDialog.hpp"   // complete type for ~unique_ptr<SignatureDialog>
 #include "Log.hpp"
 #include "core/Recents.hpp"
 
@@ -49,11 +50,19 @@ Shell::Shell()
       m_extract_rev("view.extract"),
       m_extract_bar("view.extract_bar", Gtk::Orientation::HORIZONTAL, 6),
       m_extract_entry("view.extract_entry"),
-      m_extract_msg("view.extract_msg") {
+      m_extract_msg("view.extract_msg"),
+      m_export_rev("view.export"),
+      m_export_bar("view.export_bar", Gtk::Orientation::HORIZONTAL, 6),
+      m_export_pages("view.export_pages"),
+      m_export_msg("view.export_msg"),
+      m_markup_rev("view.markup"),
+      m_markup_bar("view.markup_bar", Gtk::Orientation::HORIZONTAL, 2) {
     set_name("shell.window");
 }
 
-Shell::~Shell() = default;
+Shell::~Shell() {
+    if (m_text_pop) m_text_pop->unparent();   // a popover is parented by hand
+}
 
 // Frame, pages, actions, keys, drops; then load the recents and show Home.
 void Shell::build_ui() {
@@ -64,6 +73,8 @@ void Shell::build_ui() {
     bind_keys();
     bind_drop();
     bind_edit();
+    bind_sign();
+    bind_markup();
     m_recents_file = recents_file();
     m_recents = core::load_recents(m_recents_file);
     rebuild_recents();

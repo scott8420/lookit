@@ -10,7 +10,7 @@
 namespace lookit::core::layout {
 
 struct Size { double w = 0, h = 0; };
-struct Rect { double x = 0, y = 0, w = 0, h = 0; };
+struct Rect { double x = 0, y = 0, w = 0, h = 0; bool operator==(const Rect&) const = default; };
 
 // How pages are arranged.
 //   Continuous -- one column, top to bottom, centred.

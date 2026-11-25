@@ -1,5 +1,6 @@
 #include "Save.hpp"
 #include "Log.hpp"
+#include "MarkArt.hpp"
 
 #include <cairo-pdf.h>
 #include <cairo.h>
@@ -11,13 +12,125 @@
 #include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <cmath>
 #include <filesystem>
+#include <stdexcept>
 #include <map>
 #include <memory>
 
 namespace fs = std::filesystem;
 
 namespace lookit::save {
+
+namespace {
+
+// The page as a reader sees it before any turn of ours: its crop box, sides
+// swapped when the file itself turns it a quarter (/Rotate). That is the frame
+// poppler shows, so it is the frame a stamp's box is in.
+std::pair<double, double> seen_size(QPDFPageObjectHelper& page, int& rotate) {
+    const auto box = page.getCropBox().getArrayAsRectangle();
+    const double w = std::abs(box.urx - box.llx), h = std::abs(box.ury - box.lly);
+    rotate = 0;
+    auto r = page.getAttribute("/Rotate", false);
+    if (r.isInteger()) rotate = int((r.getIntValue() % 360 + 360) % 360);
+    return rotate % 180 ? std::pair{h, w} : std::pair{w, h};
+}
+
+// Marks onto `page`: drawn with Cairo into a one-page PDF the page's size
+// (the overlay), which qpdf turns into a form XObject and places over the page
+// -- the same machinery as `qpdf --overlay`. The page's own content is wrapped
+// in q / Q first so nothing it leaves set (a clip, a matrix) bends ours.
+// The overlay QPDF must outlive the write (its streams are copied lazily), so
+// it goes into `keep`.
+void stamp_page(QPDF& out, QPDFPageObjectHelper page, const std::vector<core::Mark>& marks,
+                std::vector<std::shared_ptr<QPDF>>& keep, std::vector<std::string>& temps) {
+    int rotate = 0;
+    const auto [w, h] = seen_size(page, rotate);
+    bool drawn = false;
+    for (const auto& m : marks) drawn = drawn || m.kind != core::MarkKind::Note;
+    if (!drawn) return;   // notes only: they go in as annotations (note_page)
+    const std::string ov = (fs::path(g_get_tmp_dir()) /
+                            ("lookit-stamp-" + std::to_string(g_get_real_time()) + "-" +
+                             std::to_string(temps.size()) + ".pdf")).string();
+    temps.push_back(ov);
+    cairo_surface_t* pdf = cairo_pdf_surface_create(ov.c_str(), w, h);
+    cairo_t* cr = cairo_create(pdf);
+    for (const auto& m : marks) mark_art::draw(cr, m, mark_art::Notes::Skip, mark_art::Blend::Multiply);
+    cairo_destroy(cr);
+    cairo_surface_finish(pdf);
+    const bool ok = cairo_surface_status(pdf) == CAIRO_STATUS_SUCCESS;
+    cairo_surface_destroy(pdf);
+    if (!ok) throw std::runtime_error("couldn't draw the signature");
+
+    auto q = std::make_shared<QPDF>();
+    q->setSuppressWarnings(true);   // cairo writes a harmless duplicate key
+    q->processFile(ov.c_str());
+    keep.push_back(q);
+    auto ovpage = QPDFPageDocumentHelper(*q).getAllPages().at(0);
+    QPDFObjectHandle fo = out.copyForeignObject(ovpage.getFormXObjectForPage());
+    // Cairo makes the overlay page a transparency GROUP, and a group's blend
+    // happens inside it, onto nothing: a "multiply" highlight would come out
+    // as solid yellow over the text. Without the group the overlay's content
+    // blends straight onto the page, as it does on screen.
+    if (fo.isStream()) fo.getDict().removeKey("/Group");
+
+    // Resources: this page's own copy (a shallow page copy may share them).
+    QPDFObjectHandle res = page.getAttribute("/Resources", true);
+    if (!res.isDictionary()) {
+        res = QPDFObjectHandle::newDictionary();
+        page.getObjectHandle().replaceKey("/Resources", res);
+    }
+    QPDFObjectHandle xo = res.getKey("/XObject");
+    xo = xo.isDictionary() ? xo.shallowCopy() : QPDFObjectHandle::newDictionary();
+    res.replaceKey("/XObject", xo);
+    int suffix = 0;
+    const std::string name = res.getUniqueResourceName("/LookitSig", suffix);
+    xo.replaceKey(name, fo);
+    // invert_transformations: undo the file's own /Rotate so the overlay lands
+    // in the frame the reader saw (and poppler drew).
+    const std::string place =
+        page.placeFormXObject(fo, name, page.getCropBox().getArrayAsRectangle(), true, true, true);
+    page.addPageContents(QPDFObjectHandle::newStream(&out, "q\n"), true);
+    page.addPageContents(QPDFObjectHandle::newStream(&out, "\nQ\nq\n" + place + "\nQ\n"), false);
+}
+
+// Sticky notes as real PDF annotations (/Subtype /Text): every reader shows
+// the icon and opens the text. The note's corner is mapped from the seen
+// frame into PDF user space (the crop box, the file's own /Rotate undone).
+void note_page(QPDF& out, QPDFPageObjectHelper page, const std::vector<core::Mark>& marks) {
+    int rotate = 0;
+    seen_size(page, rotate);
+    const auto box = page.getCropBox().getArrayAsRectangle();
+    QPDFObjectHandle annots;
+    for (const auto& m : marks) {
+        if (m.kind != core::MarkKind::Note) continue;
+        if (!annots.isInitialized()) {
+            annots = page.getObjectHandle().getKey("/Annots");
+            annots = annots.isArray() ? annots.shallowCopy() : QPDFObjectHandle::newArray();
+            page.getObjectHandle().replaceKey("/Annots", annots);
+        }
+        namespace M = core::marks;
+        const auto a = M::to_pdf({m.x, m.y}, box.llx, box.lly, box.urx, box.ury, rotate);
+        const auto b = M::to_pdf({m.x + m.w, m.y + m.h}, box.llx, box.lly, box.urx, box.ury, rotate);
+        auto dict = QPDFObjectHandle::newDictionary();
+        dict.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
+        dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Text"));
+        dict.replaceKey("/Rect", QPDFObjectHandle::newArray(QPDFObjectHandle::Rectangle(
+                                     std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x), std::max(a.y, b.y))));
+        dict.replaceKey("/Contents", QPDFObjectHandle::newUnicodeString(m.text));
+        dict.replaceKey("/Name", QPDFObjectHandle::newName("/Comment"));
+        dict.replaceKey("/F", QPDFObjectHandle::newInteger(4 | 8 | 16));   // print, no zoom, no rotate
+        dict.replaceKey("/C", QPDFObjectHandle::newArray(std::vector<QPDFObjectHandle>{
+                                  QPDFObjectHandle::newReal(((m.color >> 24) & 0xff) / 255.0, 3),
+                                  QPDFObjectHandle::newReal(((m.color >> 16) & 0xff) / 255.0, 3),
+                                  QPDFObjectHandle::newReal(((m.color >> 8) & 0xff) / 255.0, 3)}));
+        dict.replaceKey("/T", QPDFObjectHandle::newUnicodeString("Lookit"));
+        dict.replaceKey("/P", page.getObjectHandle());
+        annots.appendItem(out.makeIndirectObject(dict));
+    }
+}
+
+}  // namespace
 
 bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::PageRec>& recs,
                const std::string& out_path, std::string& error) {
@@ -26,6 +139,12 @@ bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::
         // Sources may be the very file we're writing over: they're read fully
         // into qpdf before the rename, and the rename happens last.
         std::map<int, std::shared_ptr<QPDF>> open;
+        std::vector<std::shared_ptr<QPDF>> overlays;   // alive until the write
+        std::vector<std::string> temps;
+        struct Gone {   // the overlay files go, however we leave
+            std::vector<std::string>& t;
+            ~Gone() { for (const auto& f : t) { std::error_code e; fs::remove(f, e); } }
+        } gone{temps};
         std::map<int, std::vector<QPDFPageObjectHelper>> pages;
         QPDF out;
         out.emptyPDF();
@@ -42,11 +161,20 @@ bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::
             // A page used twice needs its own copy, so always add a shallow copy.
             QPDFPageObjectHelper page = from[std::size_t(r.index)];
             outdoc.addPage(page.shallowCopyPage(), false);
-            if (r.turn) outdoc.getAllPages().back().rotatePage(90 * r.turn, true);
+            if (r.marks.empty() && !r.turn) continue;
+            auto added = outdoc.getAllPages().back();
+            // Marks first: they're placed in the page's frame before our turn.
+            if (!r.marks.empty()) {
+                stamp_page(out, added, r.marks, overlays, temps);
+                note_page(out, added, r.marks);
+            }
+            if (r.turn) added.rotatePage(90 * r.turn, true);
         }
         QPDFWriter w(out, tmp.c_str());
         w.setStaticID(false);
         w.write();
+        if (auto lg = log::get(log::Area::Io); lg && !overlays.empty())
+            lg->info("stamped {} page(s)", overlays.size());
     } catch (const std::exception& e) {
         std::error_code ec;
         fs::remove(tmp, ec);

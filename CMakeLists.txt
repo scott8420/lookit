@@ -8,6 +8,13 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
 
+# GCC on ARM / some ABIs prints a -Wpsabi note for every std::pair passed by
+# value ("parameter passing ... changed in GCC 10.1"). It only matters when
+# mixing objects built by GCC < 10.1, which Lookit never does: silence it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-psabi>)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
 # PDFs: poppler-glib (Fedora: poppler-glib-devel; Ubuntu: libpoppler-glib-dev).
@@ -41,6 +48,11 @@ add_library(lookit_core STATIC
     src/core/FileKind.cpp
     src/core/Search.cpp
     src/core/Pages.cpp
+    # s008: signatures (where a stamp sits, its moves, ink from a scan) and
+    # the export arithmetic (pixel formats, file names).
+    src/core/Sign.cpp
+    # s009: marks -- signatures and markup on a page, and their geometry.
+    src/core/Marks.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
@@ -91,12 +103,17 @@ add_executable(lookit
     src/DocView.cpp
     src/ThumbStrip.cpp
     src/Save.cpp
+    src/MarkArt.cpp
+    src/Export.cpp
+    src/SignatureDialog.cpp
     src/Shell.cpp
     src/Shell_zones.cpp
     src/Shell_bindings.cpp
     src/Shell_handlers.cpp
     src/Shell_helpers.cpp
     src/Shell_edit.cpp
+    src/Shell_sign.cpp
+    src/Shell_markup.cpp
     src/AboutWindow.cpp
     src/ShortcutsDialog.cpp
     src/Registry.cpp
@@ -114,6 +131,7 @@ target_compile_options(lookit    PRIVATE ${GTKMM_CFLAGS_OTHER})
 add_executable(lookit-peek
     src/peek/main.cpp
     src/Document.cpp
+    src/MarkArt.cpp
     src/DocView.cpp
     src/Log.cpp
 )
@@ -121,3 +139,19 @@ target_include_directories(lookit-peek PRIVATE include ${GTKMM_INCLUDE_DIRS} ${P
 target_link_libraries(lookit-peek     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} lookit_core spdlog::spdlog)
 target_link_directories(lookit-peek   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS})
 target_compile_options(lookit-peek    PRIVATE ${GTKMM_CFLAGS_OTHER})
+
+# ── lookit_savecheck -- does a saved signature land where it was seen? (s008) ──
+# Headless (no display): signs plain, /Rotate'd and cropped pages at every turn,
+# saves with qpdf, and compares poppler's render of the saved file with Lookit's
+# own render from before the save. tools/save_check.cpp.
+add_executable(lookit_savecheck
+    tools/save_check.cpp
+    src/Document.cpp
+    src/MarkArt.cpp
+    src/Save.cpp
+    src/Log.cpp
+)
+target_include_directories(lookit_savecheck PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
+target_link_libraries(lookit_savecheck     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit_savecheck   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
+target_compile_options(lookit_savecheck    PRIVATE ${GTKMM_CFLAGS_OTHER})

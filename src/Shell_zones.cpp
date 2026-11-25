@@ -424,6 +424,7 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     file->append("Save", "win.save");
     file->append("Save As…", "win.save-as");
     file->append("Combine Files into One…", "win.combine");
+    file->append("Export…", "win.export");
     m_recents_menu = Gio::Menu::create();
     file->append_submenu("Open Recent", m_recents_menu);
     menu->append_section(file);

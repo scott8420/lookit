@@ -154,6 +154,43 @@ bool duplicate(PageJournal& j, Pages& p, Pages::Id id) {
     });
 }
 
+namespace {
+std::string label(const std::string& verb, MarkKind k) { return verb + " " + marks::noun(k); }
+bool valid(const Mark& m) {
+    if (m.kind == MarkKind::Signature && m.art.empty()) return false;
+    if (marks::is_line(m.kind)) return m.w != 0 || m.h != 0;
+    return m.w > 0 && m.h > 0;
+}
+}  // namespace
+
+bool add_mark(PageJournal& j, Pages& p, Pages::Id id, const Mark& m) {
+    if (!p.get(id) || !valid(m)) return false;
+    return j.run(label("Add", m.kind), {id}, [&] {
+        auto r = *p.get(id);
+        r.marks.push_back(m);
+        p.put(id, r);
+    });
+}
+
+bool set_mark(PageJournal& j, Pages& p, Pages::Id id, int k, const Mark& m, const std::string& verb) {
+    auto r = p.get(id);
+    if (!r || k < 0 || k >= int(r->marks.size()) || !valid(m)) return false;
+    return j.run(label(verb.empty() ? "Change" : verb, m.kind), {id}, [&] {
+        r->marks[std::size_t(k)] = m;
+        p.put(id, r);
+    });
+}
+
+bool remove_mark(PageJournal& j, Pages& p, Pages::Id id, int k) {
+    auto r = p.get(id);
+    if (!r || k < 0 || k >= int(r->marks.size())) return false;
+    const auto kind = r->marks[std::size_t(k)].kind;
+    return j.run(label("Delete", kind), {id}, [&] {
+        r->marks.erase(r->marks.begin() + k);
+        p.put(id, r);
+    });
+}
+
 std::vector<int> parse_ranges(const std::string& text, int count, std::string& error) {
     error.clear();
     std::vector<int> out;

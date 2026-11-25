@@ -25,6 +25,22 @@ LOGO="resources/icons/scalable/apps/io.github.scott8420.Lookit-symbolic.svg"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 DEST="$DATA/gnome-shell/extensions/$UUID"
 
+usage() {
+    cat <<'HELP'
+Usage: ./install-extension.sh [--uninstall | --help]
+
+  ./install-extension.sh              put the Lookit tile in quick settings
+                                      (./install.sh runs this for you)
+  ./install-extension.sh --uninstall  disable the tile and remove it
+  ./install-extension.sh --help       this text
+HELP
+}
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    ""|--uninstall) ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+esac
+
 if [ "${1:-}" = "--uninstall" ]; then
     gnome-extensions disable "$UUID" 2>/dev/null || true
     rm -rf "$DEST"
@@ -68,4 +84,11 @@ if [ "$NEW" = "1" ]; then
     echo "(If it is not, run: gnome-extensions enable $UUID)"
 else
     echo "Updated. Log out and back in to load the new code."
+fi
+
+if [ -z "${LOOKIT_QUIET_HELP:-}" ]; then
+    echo ""
+    echo "Use:        open quick settings (top right) and tap the Lookit tile to send"
+    echo "            a path, a link or text to Lookit"
+    echo "Uninstall:  $(pwd)/install-extension.sh --uninstall   (everything: ./install.sh --uninstall)"
 fi

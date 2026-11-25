@@ -1,4 +1,5 @@
 #pragma once
+#include "core/Marks.hpp"
 #include "core/Undo.hpp"
 
 #include <functional>
@@ -27,6 +28,7 @@ struct PageRec {
     int    index = 0;      // page number in that source (0-based)
     int    turn = 0;       // quarter turns clockwise, 0..3
     double pos = 0;        // place in the list (ascending)
+    std::vector<Mark> marks;     // signatures and markup on this page, bottom to top (core/Marks)
     bool operator==(const PageRec&) const = default;
 };
 
@@ -80,6 +82,14 @@ bool move(PageJournal& j, Pages& p, const std::vector<Pages::Id>& ids, int to_po
 std::vector<Pages::Id> insert(PageJournal& j, Pages& p, int src, int count, int position,
                               const std::string& what);
 bool duplicate(PageJournal& j, Pages& p, Pages::Id id);
+
+// Marks (core/Marks): signatures and markup. A mark belongs to its page's
+// record, so each of these is one step on that one record. `index` counts the
+// page's marks. Labels name the kind: "Add highlight", "Delete note".
+bool add_mark(PageJournal& j, Pages& p, Pages::Id page, const Mark& m);
+// `verb` names the change: "Move", "Resize", "Edit", "Recolour" -> "Move arrow".
+bool set_mark(PageJournal& j, Pages& p, Pages::Id page, int index, const Mark& m, const std::string& verb);
+bool remove_mark(PageJournal& j, Pages& p, Pages::Id page, int index);
 
 // "3-7, 9, 12-" -> 0-based positions, in order, no repeats, within [0, count).
 // Empty -> {}. A bad token -> {} with `error` set.

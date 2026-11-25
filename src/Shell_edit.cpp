@@ -50,15 +50,21 @@ void Shell::bind_edit() {  // edit: actions + keys
     auto keys = Gtk::EventControllerKey::create();
     keys->signal_key_pressed().connect([this](guint kv, guint, Gdk::ModifierType st) {
         auto* f = get_focus();
-        if (f && (dynamic_cast<Gtk::Editable*>(f) || GTK_IS_TEXT(f->gobj()))) return false;
+        if (f && (dynamic_cast<Gtk::Editable*>(f) || GTK_IS_TEXT(f->gobj()) || GTK_IS_TEXT_VIEW(f->gobj())))
+            return false;
         const auto mods = st & (Gdk::ModifierType::CONTROL_MASK | Gdk::ModifierType::SHIFT_MASK |
                                 Gdk::ModifierType::ALT_MASK);
         const auto C = Gdk::ModifierType::CONTROL_MASK, S = Gdk::ModifierType::SHIFT_MASK;
         if ((kv == GDK_KEY_z || kv == GDK_KEY_Z) && mods == C)           { activate_action("win.undo"); return true; }
         if ((kv == GDK_KEY_z || kv == GDK_KEY_Z) && mods == (C | S))     { activate_action("win.redo"); return true; }
         if ((kv == GDK_KEY_y || kv == GDK_KEY_Y) && mods == C)           { activate_action("win.redo"); return true; }
-        if ((kv == GDK_KEY_Delete || kv == GDK_KEY_KP_Delete) && mods == Gdk::ModifierType{} && m_editing &&
-            m_stack.get_visible_child_name() == "view") { edit_delete(); return true; }
+        if ((kv == GDK_KEY_Delete || kv == GDK_KEY_KP_Delete || kv == GDK_KEY_BackSpace) &&
+            mods == Gdk::ModifierType{} && m_editing && m_stack.get_visible_child_name() == "view") {
+            // A selected mark goes first; Delete with none takes the page
+            // (Backspace never takes a page).
+            if (delete_selected_mark()) return true;
+            if (kv != GDK_KEY_BackSpace) { edit_delete(); return true; }
+        }
         return false;
     }, false);
     add_controller(keys);
@@ -76,11 +82,17 @@ void Shell::bind_edit() {  // edit: actions + keys
     files->append("Combine Files into One…", "win.combine");
     files->append("Extract Pages…", "win.extract");
     pages->append_section(files);
+    auto sign = Gio::Menu::create();   // s008 (Shell_sign.cpp)
+    sign->append("Add Signature", "win.sign");
+    sign->append("Markup", "win.markup");
+    sign->append("Signature…", "win.signature");
+    sign->append("Export…", "win.export");
+    pages->append_section(sign);
     m_edit_menu = Gio::Menu::create();
     pages->append_section(m_edit_menu);
     auto mb = Gtk::make_managed<Gtk::MenuButton>();
     mb->set_icon_name("document-edit-symbolic");
-    mb->set_tooltip_text("Pages -- rotate, delete, insert, combine, extract");
+    mb->set_tooltip_text("Pages -- rotate, delete, insert, combine, extract, sign, export");
     mb->set_menu_model(pages);
     mb->add_css_class("flat");
     auto* info = m_bar.get_last_child();   // keep Info last

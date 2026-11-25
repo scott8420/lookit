@@ -42,6 +42,24 @@ stop_previewer() {
     return 0
 }
 
+usage() {
+    cat <<'HELP'
+Usage: ./install-desktop.sh [--uninstall | --help]
+
+  ./install-desktop.sh              put Lookit in the app grid, register its
+                                    D-Bus service and Files' quick look
+                                    (./install.sh runs this for you)
+  ./install-desktop.sh --uninstall  remove the desktop entry, icons, D-Bus
+                                    service and quick look (Sushi comes back)
+  ./install-desktop.sh --help       this text
+HELP
+}
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    ""|--uninstall) ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+esac
+
 if [ "${1:-}" = "--uninstall" ]; then
     rm -f "$APPS/$APP_ID.desktop" "$ICONS/$APP_ID.svg" "$SYMBOLIC/$APP_ID-symbolic.svg" \
           "$SERVICES/$APP_ID.service" "$SERVICES/$PEEK_NAME.service"
@@ -86,3 +104,9 @@ echo "  $ICONS/$APP_ID.svg"
 echo ""
 echo "Exec points at $APP_EXEC -- re-run this if it moves."
 echo "Try: $APP_EXEC --send \"hello from the command line\""
+if [ -z "${LOOKIT_QUIET_HELP:-}" ]; then
+    echo ""
+    echo "Use:        $APP_EXEC FILE.pdf   (or Lookit in the app grid; Space in Files)"
+    echo "Help:       $APP_EXEC --help  and  Ctrl+? in the window"
+    echo "Uninstall:  $(pwd)/install-desktop.sh --uninstall   (everything: ./install.sh --uninstall)"
+fi

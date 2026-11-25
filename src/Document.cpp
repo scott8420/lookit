@@ -1,5 +1,6 @@
 #include "Document.hpp"
 #include "Log.hpp"
+#include "MarkArt.hpp"
 
 #include <gdkmm/texture.h>
 #include <giomm/file.h>
@@ -70,7 +71,7 @@ std::shared_ptr<Poppler> load_poppler(const std::string& path, std::string& erro
 
 class PdfDocument final : public Document {
 public:
-    struct Page { std::shared_ptr<Poppler> src; int index; int turn; };
+    struct Page { std::shared_ptr<Poppler> src; int index; int turn; std::vector<core::Mark> marks; };
 
     PdfDocument(std::vector<Page> pages, std::string path, std::string title) : m_pages(std::move(pages)) {
         m_kind = core::Kind::Pdf;
@@ -104,22 +105,45 @@ public:
         core::search::sort(out);
         return out;
     }
-    void render(cairo_t* cr, int i, double scale) const override {
+    std::vector<core::Mark> marks(int i) const override { return m_pages.at(std::size_t(i)).marks; }
+    int turn(int i) const override { return m_pages.at(std::size_t(i)).turn; }
+    core::layout::Size base(int i) const override { return m_base.at(std::size_t(i)); }
+    std::vector<core::layout::Rect> text_rects(int i, core::marks::Point a, core::marks::Point b) const override {
+        std::vector<core::layout::Rect> out;
+        PopplerPage* p = raw(m_pages.at(std::size_t(i)));
+        if (!p) return out;
+        PopplerRectangle sel{a.x, a.y, b.x, b.y};
+        cairo_region_t* reg = poppler_page_get_selected_region(p, 1.0, POPPLER_SELECTION_GLYPH, &sel);
+        if (!reg) return out;
+        for (int k = 0, n = cairo_region_num_rectangles(reg); k < n; ++k) {
+            cairo_rectangle_int_t r;
+            cairo_region_get_rectangle(reg, k, &r);
+            out.push_back({double(r.x), double(r.y), double(r.width), double(r.height)});
+        }
+        cairo_region_destroy(reg);
+        return out;
+    }
+    std::string text(int i) const override {
+        PopplerPage* p = raw(m_pages.at(std::size_t(i)));
+        if (!p) return {};
+        gchar* t = poppler_page_get_text(p);
+        std::string s = t ? t : "";
+        g_free(t);
+        return s;
+    }
+    void render(cairo_t* cr, int i, double scale, bool with_marks) const override {
         const auto& pg = m_pages.at(std::size_t(i));
         const auto b = m_base[std::size_t(i)];
         cairo_save(cr);
         cairo_scale(cr, scale, scale);
         // Quarter turns clockwise, about the page's own corner.
-        switch (pg.turn) {
-            case 1: cairo_translate(cr, b.h, 0);   cairo_rotate(cr, G_PI / 2); break;
-            case 2: cairo_translate(cr, b.w, b.h); cairo_rotate(cr, G_PI); break;
-            case 3: cairo_translate(cr, 0, b.w);   cairo_rotate(cr, 3 * G_PI / 2); break;
-            default: break;
-        }
+        mark_art::turn_frame(cr, pg.turn, b.w, b.h);
         cairo_rectangle(cr, 0, 0, b.w, b.h);
         cairo_set_source_rgb(cr, 1, 1, 1);
         cairo_fill(cr);
         if (auto* p = raw(pg)) poppler_page_render(p, cr);
+        if (with_marks)
+            for (const auto& m : pg.marks) mark_art::draw(cr, m);
         cairo_restore(cr);
     }
 
@@ -145,7 +169,7 @@ public:
     int count() const override { return 1; }
     core::layout::Size size(int) const override { return {double(m_w), double(m_h)}; }
     bool opaque() const override { return false; }
-    void render(cairo_t* cr, int, double scale) const override {
+    void render(cairo_t* cr, int, double scale, bool) const override {
         cairo_save(cr);
         cairo_scale(cr, scale, scale);
         cairo_set_source_surface(cr, m_surf, 0, 0);
@@ -168,7 +192,7 @@ std::unique_ptr<Document> open_pdf(const std::string& path, std::string& error) 
     std::string title;
     if (gchar* t = poppler_document_get_title(pop->doc)) { title = t; g_free(t); }
     std::vector<PdfDocument::Page> pages;
-    for (int i = 0; i < int(pop->pages.size()); ++i) pages.push_back({pop, i, 0});
+    for (int i = 0; i < int(pop->pages.size()); ++i) pages.push_back({pop, i, 0, {}});
     return std::make_unique<PdfDocument>(std::move(pages), path, title);
 }
 
@@ -198,7 +222,7 @@ std::unique_ptr<Document> open_image(const std::string& path, std::string& error
 
 }  // namespace
 
-Glib::RefPtr<Gdk::Texture> render_texture(const Document& doc, int i, double s, double max_pixels) {
+Glib::RefPtr<Gdk::Texture> render_texture(const Document& doc, int i, double s, double max_pixels, bool marks) {
     const auto sz = doc.size(i);
     double rs = s;
     if (sz.w * sz.h * rs * rs > max_pixels) rs = std::sqrt(max_pixels / (sz.w * sz.h));
@@ -206,7 +230,7 @@ Glib::RefPtr<Gdk::Texture> render_texture(const Document& doc, int i, double s, 
     const int h = std::max(1, int(std::ceil(sz.h * rs)));
     cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
     cairo_t* cr = cairo_create(surf);
-    doc.render(cr, i, rs);
+    doc.render(cr, i, rs, marks);
     cairo_destroy(cr);
     cairo_surface_flush(surf);
     const int stride = cairo_image_surface_get_stride(surf);
@@ -231,7 +255,8 @@ std::shared_ptr<Document> Document::compose(const std::vector<std::string>& sour
     }
     std::vector<PdfDocument::Page> pages;
     for (const auto& r : recs)
-        pages.push_back({r.src >= 0 && r.src < int(pops.size()) ? pops[std::size_t(r.src)] : nullptr, r.index, r.turn});
+        pages.push_back({r.src >= 0 && r.src < int(pops.size()) ? pops[std::size_t(r.src)] : nullptr, r.index, r.turn,
+                         r.marks});
     return std::make_shared<PdfDocument>(std::move(pages), path, "");
 }
 

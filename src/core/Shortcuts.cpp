@@ -117,7 +117,7 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // Doc-only: the window hears these, never taking them from a text box.
         {"Edit", "", {}, "Ctrl+Z", "Undo -- anywhere but a text box"},
         {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
-        {"Edit", "", {}, "Delete", "Delete the page you're on"},
+        {"Edit", "", {}, "Delete", "Delete the selected mark (signature, note, shape...), else the page you're on"},
         {"Edit", "", {}, "Drag a thumbnail", "Move the page; drop files between thumbnails to insert them"},
         {"Edit", "win.rotate-left",  {"<Ctrl>l"}, "", "Rotate left"},
         {"Edit", "win.rotate-right", {"<Ctrl>r"}, "", "Rotate right"},
@@ -126,6 +126,9 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Edit", "win.extract",      {"<Ctrl>e"}, "", "Extract pages to a new PDF"},
         {"Edit", "win.save",         {"<Ctrl>s"}, "", "Save"},
         {"Edit", "win.save-as",      {"<Ctrl><Shift>s"}, "", "Save as"},
+        {"Edit", "win.sign",         {"<Ctrl><Shift>i"}, "", "Add your signature to the page (draw it the first time)"},
+        {"Edit", "win.markup",       {"<Ctrl><Shift>a"}, "", "Markup bar -- highlight, note, box, ellipse, line, arrow, text"},
+        {"Edit", "win.export",       {"<Ctrl><Shift>e"}, "", "Export -- pages as PNG / JPEG / TIFF, the text, a picture as another format"},
 
         // ── General ───────────────────────────────────────────────────────────
         {"General", "win.open",          {"<Ctrl>o"}, "", "Open a PDF or a picture"},
@@ -138,6 +141,9 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // Doc-only: gestures are not GActions, but the reader still needs them.
         {"Mouse", "", {}, "Ctrl+wheel  /  pinch", "Zoom about the pointer"},
         {"Mouse", "", {}, "Drop a file", "Open it"},
+        {"Mouse", "", {}, "Drag a mark  /  its corner or ends", "Move it / size it (Esc puts it back mid-drag)"},
+        {"Mouse", "", {}, "Double-click a note or text", "Edit what it says"},
+        {"Mouse", "", {}, "Esc with a drawing tool", "Back to Select"},
 
         // ── Reading ───────────────────────────────────────────────────────────
         // Doc-only: the page view hears these itself (DocView), so they never
