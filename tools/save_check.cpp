@@ -10,9 +10,22 @@
 // page, an older quirk of the rotated render), text on the same pages; and a note must come out as a real
 // /Text annotation where it was put.
 //
+// s010: the picture tools -- every orientation, with and without a crop, is
+// written as a PNG by Save's own path and read back: each pixel must be the
+// source pixel the edit says it is (exact). Resize, light and JPEG too.
+//
+// s011: forms and passwords -- a locked one-page form opens only with its
+// password; filled through the real verb, saved keeping the lock / open / with
+// a new password, it comes back with every value, still a form, and drawn as
+// Lookit drew it before the save.
+//
 //   ./build/lookit_savecheck            prints one line per page, then OK / FAIL
 #include "Document.hpp"
+#include "Export.hpp"
+#include "PictureArt.hpp"
 #include "Save.hpp"
+#include "core/Picture.hpp"
+#include "core/Forms.hpp"
 
 #include <cairo-pdf.h>
 #include <glib.h>
@@ -227,6 +240,275 @@ int main() {
         }
         if (!ok) ++bad;
     }
+    // Pictures (s010): each pixel's colour says where it came from.
+    {
+        namespace PI = core::picture;
+        const int W = 40, H = 20;
+        auto* src_s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, W, H);
+        cairo_surface_flush(src_s);
+        auto px = [](cairo_surface_t* s, int x, int y) {
+            return reinterpret_cast<const std::uint32_t*>(cairo_image_surface_get_data(s) +
+                                                          std::size_t(y) * std::size_t(cairo_image_surface_get_stride(s)))[x];
+        };
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+                reinterpret_cast<std::uint32_t*>(cairo_image_surface_get_data(src_s) +
+                                                 std::size_t(y) * std::size_t(cairo_image_surface_get_stride(src_s)))[x] =
+                    0xff000000u | std::uint32_t(x * 6) << 16 | std::uint32_t(y * 12) << 8 | 200u;
+        cairo_surface_mark_dirty(src_s);
+        const std::string pic = (dir / "pic.png").string();
+        cairo_surface_write_to_png(src_s, pic.c_str());
+        auto orig = Document::open(pic, err);
+        if (!orig || !orig->surface()) { std::cerr << "picture open: " << err << "\n"; return 2; }
+        // Save's path: PictureArt -> a picture document -> exporter -> the file -> open again.
+        auto roundtrip = [&](const core::PicEdit& e, exporter::Format f, const std::string& name) {
+            auto doc = Document::picture(picture_art::apply(orig->surface(), e), pic);
+            const std::string out = (dir / name).string();
+            std::string e2;
+            if (!exporter::write_page(*doc, 0, 72, f, out, e2)) { std::cerr << "picture save: " << e2 << "\n"; return std::shared_ptr<Document>(); }
+            return std::shared_ptr<Document>(Document::open(out, e2));
+        };
+        int checked = 0, wrong = 0;
+        for (int t = 0; t < 4; ++t)
+            for (int f = 0; f < 2; ++f)
+                for (bool crop : {false, true}) {
+                    core::PicEdit e;
+                    e.turn = t;
+                    e.flip = f;
+                    if (crop) e = PI::cropped(e, {3, 2, 11, 7}, W, H);
+                    auto back = roundtrip(e, exporter::Format::Png, "pic-out.png");
+                    if (!back) return 2;
+                    const auto [ow, oh] = PI::out_size(e, W, H);
+                    const auto c = PI::crop_of(e, W, H);
+                    bool ok = back->size(0).w == ow && back->size(0).h == oh;
+                    int seen = 0;
+                    for (int y = 0; ok && y < H; ++y)
+                        for (int x = 0; x < W; ++x) {
+                            const auto o = PI::orient_point({x + 0.5, y + 0.5}, e, W, H);
+                            const int u = int(std::floor(o.x - c.x)), v = int(std::floor(o.y - c.y));
+                            if (u < 0 || v < 0 || u >= ow || v >= oh) continue;
+                            ++seen;
+                            if (px(back->surface(), u, v) != px(src_s, x, y)) { ok = false; break; }
+                        }
+                    ok = ok && seen == ow * oh;
+                    ++checked;
+                    if (!ok) {
+                        ++wrong;
+                        std::cout << "picture: turn " << t << " flip " << f << (crop ? " cropped" : "") << "  <- off\n";
+                    }
+                }
+        std::cout << "picture: " << checked - wrong << " of " << checked << " orientations / crops exact through a saved PNG\n";
+        if (wrong) ++bad;
+        {   // resize: half size, the gradient still runs the right way
+            core::PicEdit e = PI::resized({}, 20, 10, W, H);
+            auto back = roundtrip(e, exporter::Format::Png, "pic-half.png");
+            const bool ok = back && back->size(0).w == 20 && back->size(0).h == 10 &&
+                            ((px(back->surface(), 19, 0) >> 16) & 255) > ((px(back->surface(), 0, 0) >> 16) & 255) + 150 &&
+                            ((px(back->surface(), 0, 9) >> 8) & 255) > ((px(back->surface(), 0, 0) >> 8) & 255) + 150;
+            std::cout << "picture: resized to 20 x 10" << (ok ? "" : "  <- off") << "\n";
+            if (!ok) ++bad;
+        }
+        {   // light: brighter is brighter; JPEG keeps the size and roughly the colours
+            core::PicEdit e = PI::with_light({}, 40, 0, 0);
+            auto back = roundtrip(e, exporter::Format::Jpeg, "pic-light.jpg");
+            bool ok = back && back->size(0).w == W && back->size(0).h == H;
+            if (ok) {
+                const auto a = px(src_s, 10, 10), b = px(back->surface(), 10, 10);
+                ok = (b & 255) >= std::min(255u, (a & 255) + 30) - 12 && ((b >> 8) & 255) > ((a >> 8) & 255) + 30;
+            }
+            std::cout << "picture: lighter, through a JPEG" << (ok ? "" : "  <- off") << "\n";
+            if (!ok) ++bad;
+        }
+        cairo_surface_destroy(src_s);
+    }
+    // ── s011: forms and passwords ───────────────────────────────────────────
+    // A one-page form (a text field, a check box, a two-button radio group, a
+    // drop-down, a list), locked with a password. It must refuse to open
+    // without the password; fill through the real verb and compose; save
+    // (keeping the lock, opening it, a new password); and come back with the
+    // values, the fields still a form (/AcroForm), and the page looking as it
+    // did in Lookit before the save.
+    {
+        namespace F = core::forms;
+        const std::string form = (dir / "form.pdf").string(), locked = (dir / "form-locked.pdf").string();
+        {
+            static const char raw[] = R"PDF(%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R 6 0 R 7 0 R 10 0 R 11 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 20 0 R >> >> >> >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 20 0 R >> >> /Annots [5 0 R 6 0 R 8 0 R 9 0 R 10 0 R 11 0 R] >> endobj
+4 0 obj << >> stream
+BT /F1 14 Tf 72 720 Td (Lookit form test) Tj ET
+BT /F1 11 Tf 72 682 Td (Name) Tj ET
+BT /F1 11 Tf 72 642 Td (Agree) Tj ET
+BT /F1 11 Tf 72 602 Td (Size: small / large) Tj ET
+BT /F1 11 Tf 72 562 Td (Colour) Tj ET
+BT /F1 11 Tf 72 522 Td (Fruit) Tj ET
+endstream endobj
+5 0 obj << /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [150 675 400 695] /P 3 0 R /F 4 /DA (/Helv 12 Tf 0 g) /V (Ann) /MK << /BC [0 0 0] >> >> endobj
+6 0 obj << /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /Rect [150 637 166 653] /P 3 0 R /F 4 /V /Off /AS /Off /MK << /BC [0 0 0] /CA (4) >> /DA (/ZaDb 0 Tf 0 g) /AP << /N << /Yes 12 0 R /Off 13 0 R >> >> >> endobj
+7 0 obj << /FT /Btn /Ff 49152 /T (size) /V /large /Kids [8 0 R 9 0 R] >> endobj
+8 0 obj << /Type /Annot /Subtype /Widget /Parent 7 0 R /Rect [250 597 266 613] /P 3 0 R /F 4 /AS /Off /MK << /BC [0 0 0] /CA (l) >> /AP << /N << /small 14 0 R /Off 13 0 R >> >> >> endobj
+9 0 obj << /Type /Annot /Subtype /Widget /Parent 7 0 R /Rect [300 597 316 613] /P 3 0 R /F 4 /AS /large /MK << /BC [0 0 0] /CA (l) >> /AP << /N << /large 14 0 R /Off 13 0 R >> >> >> endobj
+10 0 obj << /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (colour) /Rect [150 555 300 575] /P 3 0 R /F 4 /DA (/Helv 12 Tf 0 g) /Opt [(Red) (Green) (Blue)] /V (Green) /MK << /BC [0 0 0] >> >> endobj
+11 0 obj << /Type /Annot /Subtype /Widget /FT /Ch /T (fruit) /Rect [150 480 300 535] /P 3 0 R /F 4 /DA (/Helv 12 Tf 0 g) /Opt [(Apple) (Pear) (Plum)] /MK << /BC [0 0 0] >> >> endobj
+12 0 obj << /Type /XObject /Subtype /Form /BBox [0 0 16 16] >> stream
+0 0 0 rg 3 3 10 10 re f
+endstream endobj
+13 0 obj << /Type /XObject /Subtype /Form /BBox [0 0 16 16] >> stream
+endstream endobj
+14 0 obj << /Type /XObject /Subtype /Form /BBox [0 0 16 16] >> stream
+0 0 0 rg 4 4 8 8 re f
+endstream endobj
+20 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+trailer << /Root 1 0 R /Size 21 >>
+%%EOF
+)PDF";
+            // Hand-written: no xref, no lengths -- qpdf rebuilds them.
+            QPDF q;
+            q.setSuppressWarnings(true);
+            q.processMemoryFile("form", raw, sizeof(raw) - 1);
+            { QPDFWriter w(q, form.c_str()); w.write(); }
+            QPDFWriter w(q, locked.c_str());
+            w.setR6EncryptionParameters("s3cret", "s3cret", true, true, true, true, true, true, qpdf_r3p_full, true);
+            w.write();
+        }
+        auto opens = [](const std::string& path, const std::string& pw, std::string& err) {
+            Document::forget(path);
+            Document::remember_password(path, pw);
+            err.clear();
+            return Document::open(path, err);
+        };
+        auto acro_fields = [](const std::string& path, const std::string& pw) {
+            QPDF q;
+            q.setSuppressWarnings(true);
+            q.processFile(path.c_str(), pw.empty() ? nullptr : pw.c_str());
+            auto af = q.getRoot().getKey("/AcroForm");
+            return af.isDictionary() && af.getKey("/Fields").isArray() ? af.getKey("/Fields").getArrayNItems() : -1;
+        };
+        auto paint = [](const Document& d) {
+            auto* s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 612, 792);
+            auto* cr = cairo_create(s);
+            d.render(cr, 0, 1.0);
+            cairo_destroy(cr);
+            cairo_surface_flush(s);
+            return s;
+        };
+        // Pixels that differ by more than a little (anti-aliasing allowed).
+        auto differ = [](cairo_surface_t* a, cairo_surface_t* b) {
+            int n = 0;
+            const int st = cairo_image_surface_get_stride(a);
+            const auto* pa = cairo_image_surface_get_data(a);
+            const auto* pb = cairo_image_surface_get_data(b);
+            for (int y = 0; y < 792; ++y)
+                for (int x = 0; x < 612 * 4; ++x)
+                    if (std::abs(int(pa[y * st + x]) - int(pb[y * st + x])) > 96) { ++n; break; }
+            return n;   // rows with a difference
+        };
+        auto line = [&](const std::string& what, bool ok) {
+            std::cout << "forms: " << what << (ok ? "" : "  <- off") << "\n";
+            if (!ok) ++bad;
+        };
+
+        std::string err;
+        line("a locked PDF asks for its password", !opens(locked, "", err) && err == Document::kLocked);
+        line("the wrong password is refused", !opens(locked, "guess", err) && err == Document::kLocked);
+        auto doc = opens(locked, "s3cret", err);
+        const auto fs0 = doc ? doc->fields(0) : std::vector<core::Field>{};
+        line("the right one opens it: 6 fields (a radio is two)", doc && fs0.size() == 6);
+
+        // As the file came (the pool's poppler is shared: paint it before the fill).
+        auto* blank = doc ? paint(*doc) : nullptr;
+        // Fill it the way the Shell does: the verb, then compose.
+        core::Pages pages;
+        core::PageJournal j{pages};
+        pages.set_door([&] { return j.open(); });
+        pages.load(locked, 1);
+        auto find = [&](const std::string& name, int nth = 0) {
+            for (const auto& f : fs0) if (f.name == name && nth-- == 0) return f;
+            return core::Field{};
+        };
+        bool filled = F::set(j, pages, find("name"), fs0, "Bob Smithers") &&
+                      F::set(j, pages, find("agree"), fs0, F::on(true)) &&
+                      F::set(j, pages, find("colour"), fs0, F::picks({2})) &&
+                      F::set(j, pages, find("fruit"), fs0, F::picks({1}));
+        // The radio that is off now ("small", left of "large").
+        core::Field small = find("size", 0), large = find("size", 1);
+        if (small.box.x > large.box.x) std::swap(small, large);
+        filled = filled && F::set(j, pages, small, fs0, F::on(true));
+        line("five fills, five steps", filled && j.size() == 5 && pages.strays() == 0);
+        auto shown = Document::compose(pages.sources(), pages.records(), locked, err, pages.doc().fields);
+        auto value = [](const Document& d, const std::string& name, double x = -1) {
+            for (const auto& f : d.fields(0))
+                if (f.name == name && (x < 0 || std::abs(f.box.x - x) < 1)) return f.value;
+            return std::string("?");
+        };
+        line("the view shows the values",
+             value(*shown, "name") == "Bob Smithers" && value(*shown, "agree") == "1" && value(*shown, "colour") == "#2" &&
+             value(*shown, "fruit") == "#1" && value(*shown, "size", small.box.x) == "1" &&
+             value(*shown, "size", large.box.x) == "0");
+        auto* before = paint(*shown);
+        line("filling changes what's drawn", blank && differ(before, blank) > 10);
+        if (blank) cairo_surface_destroy(blank);
+
+        auto save = [&](const std::string& name, const core::Lock& lock) {
+            const std::string to = (dir / name).string();
+            std::vector<std::string> temps;
+            std::string e;
+            auto srcs = Document::filled_sources(pages.sources(), pages.doc().fields, temps, e);
+            const bool ok = !srcs.empty() && save::write_pdf(srcs, pages.records(), to, e, lock);
+            for (const auto& t : temps) { std::error_code ec; fs::remove(t, ec); Document::remember_password(t, ""); }
+            if (!ok) std::cout << "forms: save " << name << ": " << e << "\n";
+            return ok ? to : std::string{};
+        };
+        auto check_saved = [&](const std::string& path, const std::string& pw, const std::string& what) {
+            std::string e;
+            auto back = opens(path, pw, e);
+            const bool vals = back && value(*back, "name") == "Bob Smithers" && value(*back, "agree") == "1" &&
+                              value(*back, "colour") == "#2" && value(*back, "fruit") == "#1" &&
+                              value(*back, "size", small.box.x) == "1" && value(*back, "size", large.box.x) == "0";
+            const int nf = back ? acro_fields(path, pw) : -1;
+            int rows = -1;
+            if (back) { auto* after = paint(*back); rows = differ(before, after); cairo_surface_destroy(after); }
+            std::cout << "forms: " << what << ": values " << (vals ? "kept" : "LOST") << ", " << nf
+                      << " fields in /AcroForm, " << rows << " rows differ from Lookit's view"
+                      << (vals && nf == 5 && rows >= 0 && rows <= 4 ? "" : "  <- off") << "\n";
+            if (!(vals && nf == 5 && rows >= 0 && rows <= 4)) ++bad;
+        };
+
+        using L = core::Lock;
+        const auto kept = save("form-kept.pdf", {});
+        line("saved keeping the lock: still asks for the password", !kept.empty() && !opens(kept, "", err) &&
+                                                                    err == Document::kLocked);
+        if (!kept.empty()) check_saved(kept, "s3cret", "kept lock, opened with its password");
+        const auto open_copy = save("form-open.pdf", {L::Mode::None, ""});
+        if (!open_copy.empty()) check_saved(open_copy, "", "password removed, opens without one");
+        const auto relocked = save("form-new.pdf", {L::Mode::Password, "n3w pass"});
+        line("a new password: the old one doesn't open it", !relocked.empty() && !opens(relocked, "s3cret", err) &&
+                                                            err == Document::kLocked);
+        if (!relocked.empty()) check_saved(relocked, "n3w pass", "new password");
+        {   // the lock comes from the record, the form from the page: a duplicated page keeps a form too
+            const bool dup = core::pages::duplicate(j, pages, pages.id_at(0));
+            const auto two = save("form-two.pdf", {L::Mode::None, ""});
+            std::string e;
+            auto back = dup && !two.empty() ? opens(two, "", e) : nullptr;
+            const bool ok = back && back->count() == 2 && back->fields(0).size() == 6 && back->fields(1).size() == 6 &&
+                            value(*back, "name") == "Bob Smithers" && acro_fields(two, "") == 10;
+            line("a duplicated form page brings its own fields (10 in /AcroForm)", ok);
+            j.undo();
+        }
+        {   // a form never filled, saved: still a form, still its own values
+            core::Pages plain;
+            plain.load(form, 1);
+            std::string e;
+            const std::string to = (dir / "form-plain.pdf").string();
+            const bool ok = save::write_pdf(plain.sources(), plain.records(), to, e) && acro_fields(to, "") == 5;
+            auto back = ok ? opens(to, "", e) : nullptr;
+            line("an unfilled form saves as a form with the file's values",
+                 back && value(*back, "name") == "Ann" && value(*back, "size", large.box.x) == "1");
+        }
+        cairo_surface_destroy(before);
+    }
+
     std::cout << (bad ? "FAIL" : "OK") << "\n";
     return bad ? 1 : 0;
 }

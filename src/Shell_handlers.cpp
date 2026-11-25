@@ -27,7 +27,7 @@ namespace lookit {
 // or say in a toast why not and stay where we were.
 void Shell::open_path(const std::string& path) {  // handler: open, show, remember
     // Unsaved page changes in the open PDF: don't drop them silently.
-    if (m_dirty && m_editing && path != m_doc_path) {
+    if (m_dirty && (m_editing || m_pic_on) && path != m_doc_path) {
         auto dialog = Gtk::AlertDialog::create("Save the changes to " +
             (m_doc_path.empty() ? std::string("Untitled.pdf") : std::filesystem::path(m_doc_path).filename().string()) +
             " first?");
@@ -49,6 +49,10 @@ void Shell::open_path(const std::string& path) {  // handler: open, show, rememb
     }
     std::string error;
     auto doc = Document::open(path, error);
+    if (!doc && error == Document::kLocked) {   // s011: ask, then open again
+        ask_unlock(path, [this, path] { open_path(path); });
+        return;
+    }
     if (!doc) {
         if (auto lg = log::get(log::Area::Io)) lg->warn("open failed: {} -- {}", path, error);
         show_toast(std::filesystem::path(path).filename().string() + ": " + error, true);
@@ -61,7 +65,11 @@ void Shell::open_path(const std::string& path) {  // handler: open, show, rememb
     m_doc_view.set_document(shared);
     m_thumbs.set_document(shared);
     if (shared->kind() == core::Kind::Pdf) begin_editing(path, shared->count());
-    else { m_editing = false; m_dirty = false; m_thumbs.set_editable(false); m_doc_path.clear(); }
+    else {
+        m_editing = false; m_dirty = false; m_thumbs.set_editable(false); m_doc_path.clear();
+        if (shared->kind() == core::Kind::Image) begin_picture(shared);   // the picture tools (s010)
+        else end_picture();
+    }
     m_hits.clear();
     m_hit = -1;
     if (m_find_rev.get_reveal_child() && !m_find_text.empty()) start_search(m_find_text);

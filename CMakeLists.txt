@@ -53,6 +53,9 @@ add_library(lookit_core STATIC
     src/core/Sign.cpp
     # s009: marks -- signatures and markup on a page, and their geometry.
     src/core/Marks.cpp
+    src/core/Picture.cpp
+    # s011: form fields -- their shape, value encoding, and the fill verb.
+    src/core/Forms.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
@@ -104,6 +107,7 @@ add_executable(lookit
     src/ThumbStrip.cpp
     src/Save.cpp
     src/MarkArt.cpp
+    src/PictureArt.cpp
     src/Export.cpp
     src/SignatureDialog.cpp
     src/Shell.cpp
@@ -114,6 +118,9 @@ add_executable(lookit
     src/Shell_edit.cpp
     src/Shell_sign.cpp
     src/Shell_markup.cpp
+    src/Shell_picture.cpp
+    src/Shell_forms.cpp
+    src/PasswordDialog.cpp
     src/AboutWindow.cpp
     src/ShortcutsDialog.cpp
     src/Registry.cpp
@@ -148,6 +155,8 @@ add_executable(lookit_savecheck
     tools/save_check.cpp
     src/Document.cpp
     src/MarkArt.cpp
+    src/PictureArt.cpp
+    src/Export.cpp
     src/Save.cpp
     src/Log.cpp
 )

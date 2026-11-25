@@ -1,4 +1,7 @@
 #include "Shell.hpp"
+#include "core/Forms.hpp"
+
+#include <set>
 #include "Log.hpp"
 #include "core/FileKind.hpp"
 #include "core/Recents.hpp"
@@ -231,6 +234,15 @@ void Shell::refresh_info() {  // helper: the Info drawer
               << std::setprecision(0) << s.w * 25.4 / 72.0 << " × " << s.h * 25.4 / 72.0 << " mm)";
             m += row("This page", o.str());
         }
+    }
+    if (m_editing && d->kind() == core::Kind::Pdf) {   // s011
+        std::set<std::string> names;   // a radio group's buttons are one field
+        for (const auto& [pg, f] : d->all_fields())
+            if (core::forms::fillable(f)) names.insert(std::to_string(f.src) + ":" + f.name);
+        const int n = int(names.size());
+        if (n) m += row("Form", std::to_string(n) + " field" + (n == 1 ? "" : "s") +
+                                (core::forms::changed(m_pages) ? " (filled in, unsaved)" : ""));
+        m += row("Password", locked_now() ? "yes" : "no");
     }
     m += row("Where", fs::path(d->path()).parent_path().string());
     m_info.set_markup(m);

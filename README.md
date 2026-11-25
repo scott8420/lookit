@@ -47,6 +47,38 @@ pick a colour to recolour it, double-click a note or text to edit it, Delete
 to remove it. Every change is one Ctrl+Z. Save draws the marks into the PDF;
 notes become real PDF sticky notes other readers can open.
 
+## Forms and passwords
+
+A PDF form's fields are tinted pale blue. Click one to fill it: a check box
+ticks, a round choice is picked, a text field or a drop-down / list opens a
+small box over it (Enter keeps what you typed, Ctrl+Enter in a box of several
+lines, Tab / Shift+Tab go on to the next / previous field, Esc leaves it as
+it was). Each fill is one Ctrl+Z, in the same undo list as the page tools.
+Ctrl+S writes the values into the PDF -- still a form, readable and editable
+in any other reader.
+
+A PDF locked with a password asks for it when you open it (and again if it
+was wrong); Lookit keeps it only until you quit. Saving a locked PDF keeps
+its lock and password. Pages menu -> Password... adds a password (AES-256),
+changes it, or removes it; the change is one Ctrl+Z and is written by the
+next Save. The Info drawer (Shift+F9) says whether the PDF has a password
+and how many fields its form has.
+
+## Pictures
+
+Open a picture and the picture bar appears under the toolbar. Left / Right
+(or its arrows) walk the pictures in the same folder, in name order ("img2"
+before "img10"). Rotate left / right (Ctrl+L / Ctrl+R), flip left-right or
+upside down (Ctrl+Shift+H / V), crop (Ctrl+Shift+X: drag a frame or its
+corners, Enter crops, Esc cancels), resize (Ctrl+Shift+R: width x height,
+in proportion, or 25 / 50 / 75%), light (Ctrl+Shift+L: brightness, contrast,
+saturation -- one Ctrl+Z undoes a whole visit to the sliders), revert to the
+original. Every edit is one Ctrl+Z; nothing touches the file until Ctrl+S,
+which writes over it in its own format (PNG, JPEG, TIFF, BMP). Ctrl+Shift+S
+saves as any of those or a PDF, by the name you give. A kind Lookit can't
+write (WebP, GIF, SVG, HEIC...) is offered as PNG. Leaving an edited picture
+asks first. Saving drops the file's metadata (EXIF) -- backlog.
+
 ## Export
 
 Ctrl+Shift+E (or File / Pages menu -> Export…): PDF pages as PNG, JPEG or

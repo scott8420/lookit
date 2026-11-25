@@ -11,8 +11,12 @@
 namespace lookit::save {
 
 // Write `recs` (pages of `sources`) to `out_path`. False + `error` on failure.
+// A source locked with a password opens with Document::password(its path).
+// Form fields come along with their pages (s011). `lock` says how the written
+// file is locked: Keep -- as the first source is (its own password and
+// permissions, or none); None -- open; Password -- AES-256 with that password.
 bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::PageRec>& recs,
-               const std::string& out_path, std::string& error);
+               const std::string& out_path, std::string& error, const core::Lock& lock = {});
 
 // A picture as a one-page PDF in the cache dir (150 dpi), for inserting and
 // combining. Returns the PDF's path, or "" + `error`.

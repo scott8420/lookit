@@ -32,8 +32,11 @@ void Shell::bind_edit() {  // edit: actions + keys
     m_pages.set_door([this] { return m_journal.open(); });
     m_journal.set_on_change([this] { apply_edit(); });
 
-    m_act_undo = add_action("undo", [this] { if (m_journal.undo().done) show_toast("Undone"); });
-    m_act_redo = add_action("redo", [this] { m_journal.redo(); });
+    // A picture has its own journal (s010); the page tools have theirs.
+    m_act_undo = add_action("undo", [this] {
+        if (m_pic_on ? m_pic_journal.undo().done : m_journal.undo().done) show_toast("Undone");
+    });
+    m_act_redo = add_action("redo", [this] { if (m_pic_on) m_pic_journal.redo(); else m_journal.redo(); });
     m_act_rotl = add_action("rotate-left",  [this] { edit_rotate(-1); });
     m_act_rotr = add_action("rotate-right", [this] { edit_rotate(+1); });
     m_act_delete = add_action("delete-page", [this] { edit_delete(); });
@@ -65,6 +68,13 @@ void Shell::bind_edit() {  // edit: actions + keys
             if (delete_selected_mark()) return true;
             if (kv != GDK_KEY_BackSpace) { edit_delete(); return true; }
         }
+        // A picture: Left / Right walk its folder (the view leaves them to us
+        // when there's only the one page to show).
+        if ((kv == GDK_KEY_Left || kv == GDK_KEY_Right) && mods == Gdk::ModifierType{} && m_pic_on &&
+            m_stack.get_visible_child_name() == "view" && !m_doc_view.cropping()) {
+            picture_browse(kv == GDK_KEY_Right ? +1 : -1);
+            return true;
+        }
         return false;
     }, false);
     add_controller(keys);
@@ -81,6 +91,7 @@ void Shell::bind_edit() {  // edit: actions + keys
     files->append("Insert Pages from File…", "win.insert-file");
     files->append("Combine Files into One…", "win.combine");
     files->append("Extract Pages…", "win.extract");
+    files->append("Password…", "win.password");   // s011 (Shell_forms.cpp)
     pages->append_section(files);
     auto sign = Gio::Menu::create();   // s008 (Shell_sign.cpp)
     sign->append("Add Signature", "win.sign");
@@ -92,7 +103,7 @@ void Shell::bind_edit() {  // edit: actions + keys
     pages->append_section(m_edit_menu);
     auto mb = Gtk::make_managed<Gtk::MenuButton>();
     mb->set_icon_name("document-edit-symbolic");
-    mb->set_tooltip_text("Pages -- rotate, delete, insert, combine, extract, sign, export");
+    mb->set_tooltip_text("Pages -- rotate, delete, insert, combine, extract, password, sign, export");
     mb->set_menu_model(pages);
     mb->add_css_class("flat");
     auto* info = m_bar.get_last_child();   // keep Info last
@@ -127,6 +138,7 @@ void Shell::bind_edit() {  // edit: actions + keys
 }
 
 void Shell::begin_editing(const std::string& path, int pages) {  // edit: a PDF opened
+    end_picture();
     m_pages.load(path, pages);
     m_journal.clear();          // fires apply_edit; m_editing still false -> no-op
     m_editing = true;
@@ -142,7 +154,7 @@ void Shell::apply_edit() {  // edit: journal changed -> view + thumbs
     if (!m_editing) { sync_edit_ui(); return; }
     std::string err;
     auto doc = Document::compose(m_pages.sources(), m_pages.records(),
-                                 m_doc_path.empty() ? "Untitled.pdf" : m_doc_path, err);
+                                 m_doc_path.empty() ? "Untitled.pdf" : m_doc_path, err, m_pages.doc().fields);
     const int page = m_doc_view.page();
     m_doc_view.refresh(doc, page);
     m_thumbs.set_document(doc);
@@ -155,23 +167,32 @@ void Shell::apply_edit() {  // edit: journal changed -> view + thumbs
 
 void Shell::sync_edit_ui() {  // edit: Undo/Redo labels, title dot, greys
     if (!m_act_undo) return;
-    m_act_undo->set_enabled(m_journal.can_undo());
-    m_act_redo->set_enabled(m_journal.can_redo());
+    // Whichever journal is live: the picture's or the pages'.
+    const bool can_undo = m_pic_on ? m_pic_journal.can_undo() : m_journal.can_undo();
+    const bool can_redo = m_pic_on ? m_pic_journal.can_redo() : m_journal.can_redo();
+    const std::string undo_label = m_pic_on ? m_pic_journal.undo_label() : m_journal.undo_label();
+    const std::string redo_label = m_pic_on ? m_pic_journal.redo_label() : m_journal.redo_label();
+    m_act_undo->set_enabled(can_undo);
+    m_act_redo->set_enabled(can_redo);
     m_edit_menu->remove_all();
-    m_edit_menu->append(m_journal.can_undo() ? "Undo " + m_journal.undo_label() : "Undo", "win.undo");
-    m_edit_menu->append(m_journal.can_redo() ? "Redo " + m_journal.redo_label() : "Redo", "win.redo");
-    for (auto& a : {m_act_rotl, m_act_rotr, m_act_dup, m_act_extract}) a->set_enabled(m_editing);
+    m_edit_menu->append(can_undo ? "Undo " + undo_label : "Undo", "win.undo");
+    m_edit_menu->append(can_redo ? "Redo " + redo_label : "Redo", "win.redo");
+    for (auto& a : {m_act_dup, m_act_extract}) a->set_enabled(m_editing);
+    if (m_act_password) m_act_password->set_enabled(m_editing);
+    for (auto& a : {m_act_rotl, m_act_rotr}) a->set_enabled(m_editing || m_pic_on);
     m_act_delete->set_enabled(m_editing && m_pages.count() > 1);
     m_act_insert->set_enabled(bool(m_doc_view.document()));
-    m_act_save->set_enabled(m_editing && (m_dirty || m_doc_path.empty()));
+    m_act_save->set_enabled((m_editing && (m_dirty || m_doc_path.empty())) || (m_pic_on && m_dirty));
     if (const auto& d = m_doc_view.document()) {
         const std::string name = m_doc_path.empty() ? "Untitled.pdf" : fs::path(m_doc_path).filename().string();
-        set_title((m_dirty ? "• " : "") + (m_editing ? name : d->name()) + " -- Lookit");
-        if (m_editing) m_doc_name.set_text((m_dirty ? "• " : "") + name);
+        const bool live = m_editing || m_pic_on;
+        set_title((m_dirty ? "• " : "") + (live ? name : d->name()) + " -- Lookit");
+        if (live) m_doc_name.set_text((m_dirty ? "• " : "") + name);
     }
 }
 
 void Shell::edit_rotate(int q) {  // edit: the page you're on
+    if (m_pic_on) { picture_rotate(q); return; }
     if (!m_editing) return;
     P::rotate(m_journal, m_pages, {m_pages.id_at(m_doc_view.page())}, q);
 }
@@ -206,6 +227,10 @@ void Shell::insert_files(const std::vector<std::string>& paths, int at) {  // ed
         else if (kind != core::Kind::Pdf) err = "not a PDF or a picture";
         std::unique_ptr<Document> probe;
         if (err.empty()) probe = Document::open(pdf, err);
+        if (!probe && err == Document::kLocked) {   // s011: ask, then insert it where it was going
+            ask_unlock(pdf, [this, path, at] { insert_files({path}, at); });
+            continue;
+        }
         if (!probe) {
             show_toast(fs::path(path).filename().string() + ": " + err, true);
             continue;
@@ -302,18 +327,17 @@ void Shell::on_extract_run() {  // edit: ranges -> Save As a new PDF
     std::vector<core::PageRec> recs;
     const auto all = m_pages.records();
     for (int i : picks) recs.push_back(all[std::size_t(i)]);
-    auto sources = m_pages.sources();
     auto dialog = Gtk::FileDialog::create();
     dialog->set_title("Save the extracted pages as");
     const std::string base = m_doc_path.empty() ? "Untitled" : fs::path(m_doc_path).stem().string();
     dialog->set_initial_name(base + " (pages " + std::string(m_extract_entry.get_text()) + ").pdf");
     if (!m_doc_path.empty())
         dialog->set_initial_folder(Gio::File::create_for_path(fs::path(m_doc_path).parent_path().string()));
-    dialog->save(*this, [this, dialog, recs, sources](const Glib::RefPtr<Gio::AsyncResult>& res) {
+    dialog->save(*this, [this, dialog, recs](const Glib::RefPtr<Gio::AsyncResult>& res) {
         Glib::RefPtr<Gio::File> f;
         try { f = dialog->save_finish(res); } catch (const Glib::Error&) { return; }
         std::string e;
-        if (save::write_pdf(sources, recs, f->get_path(), e)) {
+        if (write_doc(recs, f->get_path(), e)) {
             m_extract_rev.set_reveal_child(false);
             note_recent(f->get_path());
             show_toast("Extracted " + std::to_string(recs.size()) + " page(s) to " + f->get_basename());
@@ -324,16 +348,34 @@ void Shell::on_extract_run() {  // edit: ranges -> Save As a new PDF
 }
 
 void Shell::on_save() {  // edit: Ctrl+S
+    if (m_pic_on) {   // over the file, if Lookit can write its kind; else Save As
+        const auto e = fs::path(m_pic_path).extension().string();
+        std::string x = e;
+        for (auto& c : x) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (x == ".png" || x == ".jpg" || x == ".jpeg" || x == ".tif" || x == ".tiff" || x == ".bmp")
+            picture_save_to(m_pic_path);
+        else
+            on_save_as();
+        return;
+    }
     if (!m_editing) return;
     if (m_doc_path.empty()) { on_save_as(); return; }
     save_to(m_doc_path);
 }
 
 void Shell::on_save_as() {  // edit: Ctrl+Shift+S
-    if (!m_editing) return;
+    if (!m_editing && !m_pic_on) return;
     auto dialog = Gtk::FileDialog::create();
-    dialog->set_title("Save As");
-    dialog->set_initial_name(m_doc_path.empty() ? "Untitled.pdf" : fs::path(m_doc_path).filename().string());
+    dialog->set_title(m_pic_on ? "Save As -- .png, .jpg, .tif, .bmp or .pdf" : "Save As");
+    std::string initial = m_doc_path.empty() ? "Untitled.pdf" : fs::path(m_doc_path).filename().string();
+    if (m_pic_on) {   // a kind Lookit can't write (WebP, GIF, SVG...) is offered as PNG
+        const auto x = fs::path(m_pic_path).extension().string();
+        std::string l = x;
+        for (auto& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (!(l == ".png" || l == ".jpg" || l == ".jpeg" || l == ".tif" || l == ".tiff" || l == ".bmp"))
+            initial = fs::path(m_pic_path).stem().string() + ".png";
+    }
+    dialog->set_initial_name(initial);
     if (!m_doc_path.empty())
         dialog->set_initial_folder(Gio::File::create_for_path(fs::path(m_doc_path).parent_path().string()));
     dialog->save(*this, [this, dialog](const Glib::RefPtr<Gio::AsyncResult>& res) {
@@ -346,8 +388,9 @@ void Shell::on_save_as() {  // edit: Ctrl+Shift+S
 // Write the page list, then reopen what was written: the saved file is now the
 // one clean source, the journal starts over, and you stay on your page.
 bool Shell::save_to(const std::string& path) {  // edit: write, then reopen as clean
+    if (m_pic_on) return picture_save_to(path);
     std::string err;
-    if (!save::write_pdf(m_pages.sources(), m_pages.records(), path, err)) {
+    if (!write_doc(m_pages.records(), path, err)) {
         show_toast("Couldn't save: " + err, true);
         return false;
     }
@@ -363,10 +406,10 @@ bool Shell::save_to(const std::string& path) {  // edit: write, then reopen as c
 // Unsaved changes: ask before the window goes. Save closes after saving
 // (unless it's untitled -- then Save As, and you close again); Discard closes.
 bool Shell::on_close_request() {  // edit: unsaved changes? ask
-    if (!m_dirty || m_closing || !m_editing) return Gtk::ApplicationWindow::on_close_request();
+    if (!m_dirty || m_closing || !(m_editing || m_pic_on)) return Gtk::ApplicationWindow::on_close_request();
     auto dialog = Gtk::AlertDialog::create("Save the changes to " +
         (m_doc_path.empty() ? std::string("Untitled.pdf") : fs::path(m_doc_path).filename().string()) + "?");
-    dialog->set_detail("Your page changes are lost if you don't save them.");
+    dialog->set_detail("Your changes are lost if you don't save them.");
     dialog->set_buttons({"Cancel", "Don't Save", "Save"});
     dialog->set_cancel_button(0);
     dialog->set_default_button(2);

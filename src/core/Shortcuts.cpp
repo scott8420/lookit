@@ -130,6 +130,14 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Edit", "win.markup",       {"<Ctrl><Shift>a"}, "", "Markup bar -- highlight, note, box, ellipse, line, arrow, text"},
         {"Edit", "win.export",       {"<Ctrl><Shift>e"}, "", "Export -- pages as PNG / JPEG / TIFF, the text, a picture as another format"},
 
+        // ── Forms (s011) ──────────────────────────────────────────────────────
+        // Doc-only: a click on a field opens it; the keys are the popover's.
+        {"Forms", "", {}, "Click a field", "Tick a box, pick a choice, or type in it"},
+        {"Forms", "", {}, "Enter  /  Ctrl+Enter", "Keep what you typed (one line / several)"},
+        {"Forms", "", {}, "Tab  /  Shift+Tab", "Keep it and go to the next / previous field"},
+        {"Forms", "", {}, "Esc", "Leave the field as it was"},
+        {"Forms", "win.password", {}, "Pages menu", "Password -- add, change or remove; Save writes it"},
+
         // ── General ───────────────────────────────────────────────────────────
         {"General", "win.open",          {"<Ctrl>o"}, "", "Open a PDF or a picture"},
         {"General", "win.shortcuts",     {"<Ctrl>question", "<Ctrl>slash"}, "",
@@ -144,6 +152,16 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Mouse", "", {}, "Drag a mark  /  its corner or ends", "Move it / size it (Esc puts it back mid-drag)"},
         {"Mouse", "", {}, "Double-click a note or text", "Edit what it says"},
         {"Mouse", "", {}, "Esc with a drawing tool", "Back to Select"},
+
+        // ── Pictures (s010) ───────────────────────────────────────────────────
+        {"Pictures", "", {}, "\u2190  /  \u2192", "Previous / next picture in the folder"},
+        {"Pictures", "", {}, "Ctrl+L  /  Ctrl+R", "Rotate left / right"},
+        {"Pictures", "win.flip-horizontal", {"<Ctrl><Shift>h"}, "", "Flip left-right"},
+        {"Pictures", "win.flip-vertical",   {"<Ctrl><Shift>v"}, "", "Flip upside down"},
+        {"Pictures", "win.crop",            {"<Ctrl><Shift>x"}, "", "Crop -- drag a frame; Enter crops, Esc cancels"},
+        {"Pictures", "win.resize",          {"<Ctrl><Shift>r"}, "", "Resize"},
+        {"Pictures", "win.light",           {"<Ctrl><Shift>l"}, "", "Light -- brightness, contrast, saturation"},
+        {"Pictures", "", {}, "Ctrl+S  /  Ctrl+Shift+S", "Save over the file / save as PNG, JPEG, TIFF, BMP or PDF"},
 
         // ── Reading ───────────────────────────────────────────────────────────
         // Doc-only: the page view hears these itself (DocView), so they never

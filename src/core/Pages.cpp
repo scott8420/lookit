@@ -7,6 +7,7 @@
 namespace lookit::core {
 
 std::optional<PageRec> Pages::get(const Id& id) const {
+    if (id == kDoc) return m_doc;
     auto it = m_items.find(id);
     if (it == m_items.end()) return std::nullopt;
     return it->second;
@@ -14,6 +15,11 @@ std::optional<PageRec> Pages::get(const Id& id) const {
 
 void Pages::put(const Id& id, const std::optional<PageRec>& v) {
     if (!m_loading && m_door && !m_door()) ++m_strays;   // a write outside the door
+    if (id == kDoc) {   // never absent: "remove" is the empty record
+        m_doc = v ? *v : PageRec{};
+        if (m_changed && !m_loading) m_changed();
+        return;
+    }
     if (v) m_items[id] = *v;
     else m_items.erase(id);
     if (m_changed && !m_loading) m_changed();
@@ -60,6 +66,7 @@ void Pages::load(const std::string& path, int n) {
 
 void Pages::clear() {
     m_items.clear();
+    m_doc = PageRec{};
     m_sources.clear();
 }
 
@@ -114,6 +121,21 @@ bool move(PageJournal& j, Pages& p, const std::vector<Pages::Id>& ids, int to) {
     if (next == order) return false;
     const std::string label = moving.size() == 1 ? "Move page" : "Move " + std::to_string(moving.size()) + " pages";
     return j.run(label, order, [&] { renumber(p, next); });
+}
+
+bool set_lock(PageJournal& j, Pages& p, const Lock& lock) {
+    const Lock was = p.doc().lock;
+    if (was == lock) return false;
+    if (lock.mode == Lock::Mode::Password && lock.password.empty()) return false;
+    const std::string label = lock.mode == Lock::Mode::None ? "Remove password"
+                            : lock.mode == Lock::Mode::Keep ? "Keep the file's password"
+                            : was.mode == Lock::Mode::Password ? "Change password"
+                                                               : "Add password";
+    return j.run(label, {Pages::kDoc}, [&] {
+        auto d = p.doc();
+        d.lock = lock;
+        p.put(Pages::kDoc, d);
+    });
 }
 
 std::vector<Pages::Id> insert(PageJournal& j, Pages& p, int src, int n, int position, const std::string& what) {

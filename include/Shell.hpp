@@ -4,17 +4,25 @@
 #include "DocView.hpp"
 #include "ThumbStrip.hpp"
 #include "core/Pages.hpp"
+#include "core/Picture.hpp"
+
+#include <cairo.h>
 
 #include <gtkmm/searchentry.h>
 #include <gtkmm/dropdown.h>
 #include <gtkmm/popover.h>
 #include <gtkmm/textview.h>
 #include <gtkmm/togglebutton.h>
+#include <gtkmm/checkbutton.h>
+#include <gtkmm/menubutton.h>
+#include <gtkmm/scale.h>
+#include <gtkmm/spinbutton.h>
 
 #include <gtkmm/applicationwindow.h>
 #include <giomm/menu.h>
 #include <giomm/simpleaction.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,6 +38,8 @@
 //   Edit     -- page tools, undo, insert / combine, save.  src/Shell_edit.cpp
 //   Sign     -- signatures on pages; Export (convert).      src/Shell_sign.cpp
 //   Markup   -- the markup bar; making / moving / editing marks.  src/Shell_markup.cpp
+//   Picture  -- the picture bar: browse, rotate / flip, crop, resize, light, save.  src/Shell_picture.cpp
+//   Forms    -- fill a PDF's form; locked PDFs: unlock, Password...      src/Shell_forms.cpp
 //   Glue     -- ctor + build_ui().                          src/Shell.cpp
 //
 // Finding things
@@ -41,6 +51,9 @@
 //   "Where is a signature placed?"    -> Shell_sign.cpp (place_signature)
 //   "Where are pages exported?"       -> Shell_sign.cpp (export_some)
 //   "Where does a new highlight go?"  -> Shell_markup.cpp (on_mark_create)
+//   "Where is an edited picture drawn?" -> Shell_picture.cpp (apply_picture)
+//   "Where does a click on a form field go?" -> Shell_forms.cpp (on_field)
+//   "Where is a locked PDF's password asked?" -> Shell_forms.cpp (ask_unlock)
 //
 // The page names ("home", "view") are the stack's names, the sidebar rows'
 // "nav.<name>", and the window's ".page-<name>" CSS class (Css.hpp gradients).
@@ -50,6 +63,7 @@ namespace lookit {
 class AboutWindow;
 class ShortcutsDialog;
 class SignatureDialog;
+class PasswordDialog;
 
 class Shell : public Gtk::ApplicationWindow {
 public:
@@ -133,6 +147,35 @@ private:
     void on_mark_open(int page, int index);      // category: markup: double-click a note / text
     void edit_mark_text(int page, int index, core::Mark draft);   // category: markup: the text popover
     bool delete_selected_mark();                 // category: markup: Delete with a mark selected
+
+    // ── picture tools (s010) ────────────────────────────────────────────────
+    void bind_picture();                         // category: picture: the bar, actions, view signals
+    void begin_picture(const std::shared_ptr<Document>& doc);   // category: picture: a picture opened
+    void end_picture();                          // category: picture: something else opened
+    void apply_picture();                        // category: picture: journal changed -> the view (on idle)
+    void sync_picture_bar();                     // category: picture: where, size, greys, sliders
+    void picture_rotate(int quarter);            // category: picture
+    void picture_flip(bool horizontal);          // category: picture
+    void on_crop(bool on);                       // category: picture: the crop frame on / off
+    void crop_done(bool apply);                  // category: picture: Enter / Esc / Apply / Cancel
+    void on_resize_apply();                      // category: picture: the resize popover's button
+    void on_light_changed();                     // category: picture: a slider moved
+    void picture_browse(int dir);                // category: picture: Left / Right in the folder
+    bool picture_save_to(const std::string& path);   // category: picture: any Export format by its extension
+    std::shared_ptr<Document> picture_doc() const;   // category: picture: what you see now
+
+    // ── forms + passwords (s011) ────────────────────────────────────────────
+    void bind_forms();                           // category: forms: view signal, Password..., the field popover
+    void on_field(int page, core::Field f);      // category: forms: a click on a field: tick / choose / type
+    void edit_field(int page, const core::Field& f);   // category: forms: the popover for text and choices
+    void commit_field();                         // category: forms: the popover closed
+    void field_step(int dir);                    // category: forms: Tab / Shift+Tab to the next field
+    std::vector<core::Field> field_group(const core::Field& f) const;   // category: forms: same name, same source
+    void ask_unlock(const std::string& path, std::function<void()> then);   // category: forms: a locked PDF
+    void on_password();                          // category: forms: Pages -> Password...
+    bool locked_now() const;                     // category: forms: will Save write a password?
+    // Write `recs` with the form values filled in and the lock (Save, Extract).
+    bool write_doc(const std::vector<core::PageRec>& recs, const std::string& path, std::string& err);   // category: forms
 
     // ── helpers ────────────────────────────────────────────────────────────
     std::string recents_file() const;            // category: helper: the XDG path
@@ -263,6 +306,50 @@ private:
     Gtk::Button*       m_text_delete = nullptr;
     struct TextEdit { int page = -1, index = -1; core::Mark draft; bool open = false; } m_text_edit;
     void commit_text();                          // category: markup: the popover closed
+
+    // Picture tools: the picture as it came, its edit record and journal.
+    core::PicStore     m_pic;
+    core::PicJournal   m_pic_journal{m_pic};
+    bool               m_pic_on = false;            // a picture is open: the tools are live
+    cairo_surface_t*   m_pic_base = nullptr;        // as decoded (our reference)
+    cairo_surface_t*   m_pic_shaped = nullptr;      // orient / crop / resize done (cache for the sliders)
+    core::PicEdit      m_pic_shaped_for;            // ... for this geometry
+    std::string        m_pic_path;
+    std::vector<std::string> m_pic_folder;          // the folder's pictures, natural order
+    sigc::connection   m_pic_idle;
+    int                m_light_session = 0;         // one slider visit = one undo step
+    bool               m_pic_syncing = false;
+    Glib::RefPtr<Gio::SimpleAction> m_act_crop, m_act_resize, m_act_light, m_act_flip_h, m_act_flip_v,
+                                    m_act_revert;
+    widgets::Revealer  m_picture_rev;
+    widgets::Box       m_picture_bar;
+    Gtk::Button*       m_pic_prev = nullptr;
+    Gtk::Button*       m_pic_next = nullptr;
+    Gtk::Label*        m_pic_where = nullptr;
+    Gtk::Label*        m_pic_size = nullptr;
+    Gtk::ToggleButton* m_pic_crop = nullptr;
+    Gtk::Box*          m_pic_crop_box = nullptr;    // Apply / Cancel, while cropping
+    Gtk::MenuButton*   m_pic_resize_btn = nullptr;
+    Gtk::SpinButton*   m_pic_w = nullptr;
+    Gtk::SpinButton*   m_pic_h = nullptr;
+    Gtk::CheckButton*  m_pic_keep = nullptr;
+    Gtk::MenuButton*   m_pic_light_btn = nullptr;
+    Gtk::Scale*        m_pic_light[3] = {nullptr, nullptr, nullptr};   // brightness, contrast, saturation
+
+    // Forms + passwords
+    Glib::RefPtr<Gio::SimpleAction> m_act_password;
+    std::unique_ptr<PasswordDialog> m_password;
+    std::unique_ptr<Gtk::Popover>   m_field_pop;
+    Gtk::Entry*        m_field_entry = nullptr;     // a text field / a combo's own words
+    Gtk::TextView*     m_field_view = nullptr;      // a multi-line text field
+    std::vector<Gtk::CheckButton*> m_field_checks;  // a list that takes several
+    struct FieldEdit {
+        int page = -1;
+        core::Field f;
+        bool open = false;
+        bool skip = false;      // closed by a pick that already set it, or Esc
+        int  step = 0;          // Tab / Shift+Tab: go on to the next / previous field
+    } m_fedit;
 
     std::unique_ptr<AboutWindow>     m_about;
     std::unique_ptr<ShortcutsDialog> m_shortcuts;

@@ -199,6 +199,16 @@ DocView::DocView() {
         // Escape: a drag goes back where it started; else a selected mark is
         // let go; else a drawing tool goes back to Select. Otherwise it's not
         // ours (the window closes drawers).
+        if (m_crop_on && (kv == GDK_KEY_Escape || kv == GDK_KEY_Return || kv == GDK_KEY_KP_Enter)) {
+            if (kv == GDK_KEY_Escape && m_cdrag.active) {   // a drag goes back first
+                m_cdrag.active = false;
+                m_crop = m_cdrag.before;
+                gtk_widget_queue_draw(m_canvas);
+                return true;
+            }
+            m_crop_done.emit(kv != GDK_KEY_Escape);
+            return true;
+        }
         if (kv == GDK_KEY_Escape) {
             if (m_drag.mode != DragMode::None) { m_drag.mode = DragMode::None; gtk_widget_queue_draw(m_canvas); return true; }
             if (m_sel.valid()) { clear_mark(); return true; }
@@ -225,10 +235,12 @@ DocView::DocView() {
             case GDK_KEY_Up:        return by(-48);
             case GDK_KEY_Home:      go_to(0); return true;
             case GDK_KEY_End:       go_to(count() - 1); return true;
-            case GDK_KEY_Right:     if (gtk_adjustment_get_upper(canvas(m_canvas)->hadj) >
+            case GDK_KEY_Right:     if (count() <= 1) return false;   // a picture: the window browses the folder
+                                    if (gtk_adjustment_get_upper(canvas(m_canvas)->hadj) >
                                         gtk_adjustment_get_page_size(canvas(m_canvas)->hadj) + 1) return false;
                                     next_page(); return true;
-            case GDK_KEY_Left:      if (gtk_adjustment_get_upper(canvas(m_canvas)->hadj) >
+            case GDK_KEY_Left:      if (count() <= 1) return false;   // a picture: the window browses the folder
+                                    if (gtk_adjustment_get_upper(canvas(m_canvas)->hadj) >
                                         gtk_adjustment_get_page_size(canvas(m_canvas)->hadj) + 1) return false;
                                     prev_page(); return true;
             default:                return false;
@@ -358,6 +370,18 @@ core::layout::Rect DocView::mark_screen_box(int page, const core::Mark& m) const
 }
 
 void DocView::mark_cursor(double x, double y) {
+    if (m_crop_on && m_doc && !m_cdrag.active && !m_placed.pages.empty()) {
+        auto* c = canvas(m_canvas);
+        const auto& r = m_placed.pages[0];
+        const double px = (x + gtk_adjustment_get_value(c->hadj) - r.x) / m_scale;
+        const double py = (y + gtk_adjustment_get_value(c->vadj) - r.y) / m_scale;
+        using G = core::picture::Grip;
+        const auto g = core::picture::crop_hit(m_crop, px, py, 10 / m_scale);
+        gtk_widget_set_cursor_from_name(m_canvas, g == G::TopLeft || g == G::BottomRight ? "nwse-resize"
+                                                  : g == G::TopRight || g == G::BottomLeft ? "nesw-resize"
+                                                  : g == G::Body ? "move" : "crosshair");
+        return;
+    }
     if (!m_doc || m_drag.mode != DragMode::None || m_tool != Tool::Select) return;
     auto* c = canvas(m_canvas);
     const double cx = x + gtk_adjustment_get_value(c->hadj), cy = y + gtk_adjustment_get_value(c->vadj);
@@ -367,6 +391,14 @@ void DocView::mark_cursor(double x, double y) {
         if (h.part == M::Part::Corner) want = "nwse-resize";
         else if (h.part == M::Part::Start || h.part == M::Part::End) want = "crosshair";
         else if (h.part == M::Part::Body) want = "move";
+        if (!want && m_doc->kind() == core::Kind::Pdf) {   // a form field: text cursor, or a hand
+            const auto& r = m_placed.pages[std::size_t(pg)];
+            const auto b = m_doc->base(pg);
+            const auto u = M::unturn_point({(cx - r.x) / m_scale, (cy - r.y) / m_scale}, b.w, b.h, m_doc->turn(pg));
+            const auto& fl = page_fields(pg);
+            if (const int f = core::forms::hit(fl, u.x, u.y); f >= 0 && core::forms::fillable(fl[std::size_t(f)]))
+                want = fl[std::size_t(f)].kind == core::FieldKind::Text ? "text" : "pointer";
+        }
     }
     gtk_widget_set_cursor_from_name(m_canvas, want);
 }
@@ -377,6 +409,22 @@ void DocView::drag_begin(double x, double y, Gtk::GestureDrag* g) {
     auto* c = canvas(m_canvas);
     const double cx = x + gtk_adjustment_get_value(c->hadj), cy = y + gtk_adjustment_get_value(c->vadj);
     const int pg = page_under(cx, cy);
+    if (m_crop_on) {   // the crop frame: a corner, the body, or a new frame
+        if (pg != 0) { g->set_state(Gtk::EventSequenceState::DENIED); return; }
+        g->set_state(Gtk::EventSequenceState::CLAIMED);
+        gtk_widget_grab_focus(m_canvas);
+        const auto& r = m_placed.pages[0];
+        const auto sz = m_doc->size(0);
+        auto& d = m_cdrag;
+        d.px = std::clamp((cx - r.x) / m_scale, 0.0, sz.w);
+        d.py = std::clamp((cy - r.y) / m_scale, 0.0, sz.h);
+        d.grip = core::picture::crop_hit(m_crop, d.px, d.py, 10 / m_scale);
+        const bool whole = m_crop.w >= sz.w - 0.5 && m_crop.h >= sz.h - 0.5;
+        if (d.grip == core::picture::Grip::Body && whole) d.grip = core::picture::Grip::None;
+        d.start = d.before = m_crop;
+        d.active = true;
+        return;
+    }
     const bool marks_ok = m_doc->kind() == core::Kind::Pdf;
     if (pg < 0 || !marks_ok) {
         if (m_sel.valid()) clear_mark();
@@ -403,6 +451,15 @@ void DocView::drag_begin(double x, double y, Gtk::GestureDrag* g) {
     const auto hit = M::hit(shapes(pg), cx, cy, 9);
     if (hit.index < 0) {
         if (m_sel.valid()) clear_mark();
+        // A form field under the click (s011): the Shell fills it.
+        const auto u = M::unturn_point(at, b.w, b.h, t);
+        const auto& fl = page_fields(pg);
+        if (const int f = core::forms::hit(fl, u.x, u.y); f >= 0) {
+            g->set_state(Gtk::EventSequenceState::CLAIMED);
+            gtk_widget_grab_focus(m_canvas);
+            m_field.emit(pg, fl[std::size_t(f)]);
+            return;
+        }
         g->set_state(Gtk::EventSequenceState::DENIED);
         return;
     }
@@ -435,6 +492,20 @@ void DocView::drag_begin(double x, double y, Gtk::GestureDrag* g) {
 }
 
 void DocView::drag_update(double dx, double dy) {
+    if (m_cdrag.active && m_doc) {
+        const auto sz = m_doc->size(0);
+        const double ux = dx / m_scale, uy = dy / m_scale;
+        auto& d = m_cdrag;
+        if (d.grip == core::picture::Grip::None) {
+            const double bx = std::clamp(d.px + ux, 0.0, sz.w), by = std::clamp(d.py + uy, 0.0, sz.h);
+            m_crop = {std::min(d.px, bx), std::min(d.py, by), std::abs(bx - d.px), std::abs(by - d.py)};
+        } else {
+            m_crop = core::picture::crop_drag(d.start, d.grip, ux, uy, sz.w, sz.h, 8 / m_scale);
+        }
+        gtk_widget_queue_draw(m_canvas);
+        m_crop_changed.emit();
+        return;
+    }
     if (m_drag.mode == DragMode::None || !m_doc || m_drag.page >= m_doc->count()) return;
     const int pg = m_drag.page;
     const auto b = m_doc->base(pg);
@@ -491,6 +562,15 @@ void DocView::drag_update(double dx, double dy) {
 }
 
 void DocView::drag_end() {
+    if (m_cdrag.active) {
+        m_cdrag.active = false;
+        // A click, or a frame too small to see: the frame stays as it was.
+        if (m_cdrag.grip == core::picture::Grip::None && (m_crop.w * m_scale < 6 || m_crop.h * m_scale < 6))
+            m_crop = m_cdrag.before;
+        gtk_widget_queue_draw(m_canvas);
+        m_crop_changed.emit();
+        return;
+    }
     auto d = m_drag;
     m_drag.mode = DragMode::None;
     gtk_widget_queue_draw(m_canvas);
@@ -617,10 +697,67 @@ void DocView::snapshot_marks(GtkSnapshot* s, int page, const Rect_& r, double ox
     if (!text_draft && M::resizable(m.kind)) knob(x + w, y + h);
 }
 
+void DocView::set_crop(bool on) {
+    m_crop_on = on && m_doc && m_doc->count() > 0;
+    m_cdrag.active = false;
+    if (m_crop_on) {
+        const auto sz = m_doc->size(0);
+        m_crop = {0, 0, sz.w, sz.h};
+        gtk_widget_grab_focus(m_canvas);
+    }
+    gtk_widget_set_cursor_from_name(m_canvas, m_crop_on ? "crosshair" : nullptr);
+    gtk_widget_queue_draw(m_canvas);
+    m_crop_changed.emit();
+}
+
+// The crop frame: what's cut away dimmed, the frame, thirds, four corner knobs.
+void DocView::snapshot_crop(GtkSnapshot* s, const Rect_& r, double ox, double oy) {
+    const float px = float(r.x - ox), py = float(r.y - oy), pw = float(r.w), ph = float(r.h);
+    const float x = px + float(m_crop.x * m_scale), y = py + float(m_crop.y * m_scale);
+    const float w = float(m_crop.w * m_scale), h = float(m_crop.h * m_scale);
+    const GdkRGBA dim{0, 0, 0, 0.55f}, white{1, 1, 1, 0.95f}, faint{1, 1, 1, 0.35f};
+    const GdkRGBA knob{0.20f, 0.65f, 0.68f, 1.0f};
+    auto fill = [&](float a, float b, float c, float d, const GdkRGBA& col) {
+        if (c <= 0 || d <= 0) return;
+        graphene_rect_t g = GRAPHENE_RECT_INIT(a, b, c, d);
+        gtk_snapshot_append_color(s, &col, &g);
+    };
+    fill(px, py, pw, y - py, dim);                         // above
+    fill(px, y + h, pw, py + ph - (y + h), dim);           // below
+    fill(px, y, x - px, h, dim);                           // left
+    fill(x + w, y, px + pw - (x + w), h, dim);             // right
+    for (int k = 1; k < 3; ++k) {                          // thirds
+        fill(x + w * float(k) / 3.0f, y, 1, h, faint);
+        fill(x, y + h * float(k) / 3.0f, w, 1, faint);
+    }
+    fill(x, y, w, 1.5f, white);
+    fill(x, y + h - 1.5f, w, 1.5f, white);
+    fill(x, y, 1.5f, h, white);
+    fill(x + w - 1.5f, y, 1.5f, h, white);
+    const std::pair<float, float> corners[] = {{x, y}, {x + w, y}, {x, y + h}, {x + w, y + h}};
+    for (const auto& [kx, ky] : corners) {
+        graphene_rect_t k = GRAPHENE_RECT_INIT(kx - 6, ky - 6, 12, 12);
+        GskRoundedRect kr;
+        gsk_rounded_rect_init_from_rect(&kr, &k, 6);
+        gtk_snapshot_push_rounded_clip(s, &kr);
+        gtk_snapshot_append_color(s, &white, &k);
+        gtk_snapshot_pop(s);
+        graphene_rect_t in = GRAPHENE_RECT_INIT(kx - 4, ky - 4, 8, 8);
+        gsk_rounded_rect_init_from_rect(&kr, &in, 4);
+        gtk_snapshot_push_rounded_clip(s, &kr);
+        gtk_snapshot_append_color(s, &knob, &in);
+        gtk_snapshot_pop(s);
+    }
+}
+
 int DocView::count() const { return m_doc ? m_doc->count() : 0; }
 
 void DocView::set_document(std::shared_ptr<Document> doc) {
     m_doc = std::move(doc);
+    m_fields.clear();
+    m_focus_page = m_focus_id = -1;
+    m_crop_on = false;
+    m_cdrag.active = false;
     m_sel = {};
     m_drag.mode = DragMode::None;
     m_cache.clear();
@@ -643,8 +780,64 @@ void DocView::set_document(std::shared_ptr<Document> doc) {
     m_changed.emit();
 }
 
+// ── form fields (s011) ──────────────────────────────────────────────────────
+const std::vector<core::Field>& DocView::page_fields(int page) const {
+    static const std::vector<core::Field> none;
+    if (!m_doc || page < 0 || page >= m_doc->count() || m_doc->kind() != core::Kind::Pdf) return none;
+    auto it = m_fields.find(page);
+    if (it == m_fields.end()) it = m_fields.emplace(page, m_doc->fields(page)).first;
+    return it->second;
+}
+
+void DocView::set_field_focus(int page, int id) {
+    m_focus_page = page;
+    m_focus_id = id;
+    gtk_widget_queue_draw(m_canvas);
+}
+
+core::layout::Rect DocView::field_screen_box(int page, const core::Field& f) const {
+    if (!m_doc || page < 0 || page >= int(m_placed.pages.size())) return {};
+    const auto& r = m_placed.pages[std::size_t(page)];
+    const auto b = m_doc->base(page);
+    const auto v = M::turn_rect(f.box, b.w, b.h, m_doc->turn(page));
+    auto* c = canvas(m_canvas);
+    return {r.x + v.x * m_scale - gtk_adjustment_get_value(c->hadj), r.y + v.y * m_scale - gtk_adjustment_get_value(c->vadj),
+            v.w * m_scale, v.h * m_scale};
+}
+
+// A pale blue over every field you can fill (as other readers do), so a form
+// shows where to type; the one being edited gets an outline.
+void DocView::snapshot_fields(GtkSnapshot* s, int page, const core::layout::Rect& r, double ox, double oy) {
+    const auto& fl = page_fields(page);
+    if (fl.empty()) return;
+    const auto b = m_doc->base(page);
+    const int t = m_doc->turn(page);
+    for (const auto& f : fl) {
+        if (!core::forms::fillable(f)) continue;
+        const auto v = M::turn_rect(f.box, b.w, b.h, t);
+        graphene_rect_t fr = GRAPHENE_RECT_INIT(float(r.x - ox + v.x * m_scale), float(r.y - oy + v.y * m_scale),
+                                                float(v.w * m_scale), float(v.h * m_scale));
+        const GdkRGBA tint{0.21f, 0.52f, 0.89f, 0.12f};
+        gtk_snapshot_append_color(s, &tint, &fr);
+        const bool focus = page == m_focus_page && f.id == m_focus_id;
+        const GdkRGBA edge = focus ? GdkRGBA{0.21f, 0.52f, 0.89f, 0.95f} : GdkRGBA{0.21f, 0.52f, 0.89f, 0.35f};
+        const float w = focus ? 2.0f : 1.0f;
+        GskRoundedRect rr;
+        gsk_rounded_rect_init_from_rect(&rr, &fr, 0);
+        const float widths[4] = {w, w, w, w};
+        const GdkRGBA colors[4] = {edge, edge, edge, edge};
+        gtk_snapshot_append_border(s, &rr, widths, colors);
+    }
+}
+
 void DocView::refresh(std::shared_ptr<Document> doc, int page) {
     m_doc = std::move(doc);
+    m_fields.clear();
+    m_cdrag.active = false;
+    if (m_crop_on && m_doc && m_doc->count() > 0) {   // the picture changed under the frame: all of it
+        const auto sz = m_doc->size(0);
+        m_crop = {0, 0, sz.w, sz.h};
+    }
     m_drag.mode = DragMode::None;
     if (!m_doc || m_sel.page >= m_doc->count() || m_sel.index >= int(m_doc->marks(std::max(0, m_sel.page)).size()))
         m_sel = {};
@@ -889,7 +1082,9 @@ void DocView::canvas_snapshot(GtkSnapshot* s, int w, int h) {
             it = m_cache.find(i);
         }
         gtk_snapshot_append_texture(s, it->second.tex->gobj(), &box);
+        snapshot_fields(s, i, r, ox, oy);
         snapshot_marks(s, i, r, ox, oy, it->second.tex, box);
+        if (m_crop_on && i == 0) snapshot_crop(s, r, ox, oy);
 
         // Search hits on this page: all tinted, the current one stronger.
         auto lo = std::lower_bound(m_hits.begin(), m_hits.end(), i,

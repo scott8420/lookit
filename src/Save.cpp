@@ -1,6 +1,7 @@
 #include "Save.hpp"
 #include "Log.hpp"
 #include "MarkArt.hpp"
+#include "Document.hpp"
 
 #include <cairo-pdf.h>
 #include <cairo.h>
@@ -8,6 +9,7 @@
 #include <giomm/file.h>
 #include <glibmm/miscutils.h>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFAcroFormDocumentHelper.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
@@ -16,6 +18,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <map>
+#include <set>
 #include <memory>
 
 namespace fs = std::filesystem;
@@ -133,7 +136,7 @@ void note_page(QPDF& out, QPDFPageObjectHelper page, const std::vector<core::Mar
 }  // namespace
 
 bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::PageRec>& recs,
-               const std::string& out_path, std::string& error) {
+               const std::string& out_path, std::string& error, const core::Lock& lock) {
     const std::string tmp = out_path + ".lookit-tmp";
     try {
         // Sources may be the very file we're writing over: they're read fully
@@ -146,23 +149,39 @@ bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::
             ~Gone() { for (const auto& f : t) { std::error_code e; fs::remove(f, e); } }
         } gone{temps};
         std::map<int, std::vector<QPDFPageObjectHelper>> pages;
+        std::map<int, std::shared_ptr<QPDFAcroFormDocumentHelper>> forms;
+        auto load = [&](int src) {
+            if (open.count(src)) return;
+            auto q = std::make_shared<QPDF>();
+            const std::string& path = sources.at(std::size_t(src));
+            const std::string pw = Document::password(path);
+            q->processFile(path.c_str(), pw.empty() ? nullptr : pw.c_str());
+            pages[src] = QPDFPageDocumentHelper(*q).getAllPages();
+            forms[src] = std::make_shared<QPDFAcroFormDocumentHelper>(*q);
+            open[src] = q;
+        };
         QPDF out;
         out.emptyPDF();
         QPDFPageDocumentHelper outdoc(out);
+        QPDFAcroFormDocumentHelper outform(out);
+        int fields = 0;
         for (const auto& r : recs) {
-            if (!open.count(r.src)) {
-                auto q = std::make_shared<QPDF>();
-                q->processFile(sources.at(std::size_t(r.src)).c_str());
-                pages[r.src] = QPDFPageDocumentHelper(*q).getAllPages();
-                open[r.src] = q;
-            }
+            load(r.src);
             auto& from = pages[r.src];
             if (r.index < 0 || r.index >= int(from.size())) continue;
             // A page used twice needs its own copy, so always add a shallow copy.
             QPDFPageObjectHelper page = from[std::size_t(r.index)];
             outdoc.addPage(page.shallowCopyPage(), false);
-            if (r.marks.empty() && !r.turn) continue;
             auto added = outdoc.getAllPages().back();
+            // Form fields (s011): a copied page keeps its widgets, but the
+            // fields live in the document's /AcroForm -- carry them over (a
+            // page used twice gets its own copies, renamed if they clash).
+            if (forms[r.src]->hasAcroForm()) {
+                std::set<QPDFObjGen> made;
+                outform.fixCopiedAnnotations(added.getObjectHandle(), page.getObjectHandle(), *forms[r.src], &made);
+                fields += int(made.size());
+            }
+            if (r.marks.empty() && !r.turn) continue;
             // Marks first: they're placed in the page's frame before our turn.
             if (!r.marks.empty()) {
                 stamp_page(out, added, r.marks, overlays, temps);
@@ -170,11 +189,37 @@ bool write_pdf(const std::vector<std::string>& sources, const std::vector<core::
             }
             if (r.turn) added.rotatePage(90 * r.turn, true);
         }
+        if (fields) {
+            // The source's form-wide defaults (fonts, default look) come along
+            // so a reader can redraw a field it edits.
+            load(recs.empty() ? 0 : recs.front().src);
+            auto af = open[recs.empty() ? 0 : recs.front().src]->getRoot().getKey("/AcroForm");
+            auto oaf = out.getRoot().getKey("/AcroForm");
+            if (af.isDictionary() && oaf.isDictionary())
+            {   // plain values, made anew in `out` (a handle can't cross files)
+                if (af.getKey("/DA").isString() && !oaf.hasKey("/DA"))
+                    oaf.replaceKey("/DA", QPDFObjectHandle::newString(af.getKey("/DA").getStringValue()));
+                if (af.getKey("/Q").isInteger() && !oaf.hasKey("/Q"))
+                    oaf.replaceKey("/Q", QPDFObjectHandle::newInteger(af.getKey("/Q").getIntValue()));
+            }
+        }
         QPDFWriter w(out, tmp.c_str());
         w.setStaticID(false);
+        using Mode = core::Lock::Mode;
+        if (lock.mode == Mode::Password) {
+            w.setR6EncryptionParameters(lock.password.c_str(), lock.password.c_str(), true, true, true, true, true,
+                                        true, qpdf_r3p_full, true);
+        } else if (lock.mode == Mode::Keep && !sources.empty()) {
+            load(0);
+            if (open[0]->isEncrypted()) w.copyEncryptionParameters(*open[0]);
+        }
         w.write();
         if (auto lg = log::get(log::Area::Io); lg && !overlays.empty())
             lg->info("stamped {} page(s)", overlays.size());
+        if (auto lg = log::get(log::Area::Io); lg && fields)
+            lg->info("carried {} form field(s)", fields);
+        if (auto lg = log::get(log::Area::Io); lg && lock.mode != Mode::Keep)   // never the password itself
+            lg->info("lock: {}", lock.mode == Mode::None ? "none" : "password (AES-256)");
     } catch (const std::exception& e) {
         std::error_code ec;
         fs::remove(tmp, ec);

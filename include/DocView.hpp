@@ -1,6 +1,7 @@
 #pragma once
 #include "Document.hpp"
 #include "core/Layout.hpp"
+#include "core/Picture.hpp"
 
 #include <gdkmm/texture.h>
 #include <gtkmm/scrolledwindow.h>
@@ -91,6 +92,29 @@ public:
     core::layout::Rect mark_screen_box(int page, int index) const;
     core::layout::Rect mark_screen_box(int page, const core::Mark& m) const;
 
+    // ── form fields (s011) ──
+    // Fields that can be filled are tinted. With Select, a click on one (and
+    // no mark there) hands the Shell the field -- a box ticks, a text field
+    // opens its editor; nothing changes the document here.
+    sigc::signal<void(int, core::Field)>& signal_field() { return m_field; }
+    // The field being edited is outlined (id -1: none).
+    void set_field_focus(int page, int id);
+    // Where a field is on screen (widget pixels), for a popover to point at.
+    core::layout::Rect field_screen_box(int page, const core::Field& f) const;
+    // The fields of `page` (cached until the document changes).
+    const std::vector<core::Field>& page_fields(int page) const;
+
+    // ── the crop frame (pictures, s010) ──
+    // On: a frame over the picture (all of it at first). Drag a corner to size
+    // it, inside to move it, anywhere else to draw a new one. Enter / Esc ask
+    // the Shell to apply / cancel (signal_crop_done) -- the crop itself is the
+    // Shell's one undo step; the frame changes nothing.
+    void set_crop(bool on);
+    bool cropping() const { return m_crop_on; }
+    core::layout::Rect crop_frame() const { return m_crop; }   // the picture's pixels, as seen
+    sigc::signal<void(bool)>& signal_crop_done() { return m_crop_done; }   // true: apply
+    sigc::signal<void()>& signal_crop_changed() { return m_crop_changed; }
+
     // ── called by the C canvas ──
     void canvas_allocate(int w, int h);
     void canvas_snapshot(GtkSnapshot* s, int w, int h);
@@ -154,6 +178,23 @@ private:
     void mark_cursor(double x, double y);
     void snapshot_marks(GtkSnapshot* s, int page, const core::layout::Rect& r, double ox, double oy,
                         const Glib::RefPtr<Gdk::Texture>& paper, const graphene_rect_t& box);
+    // Form fields: cached per page; the one being edited.
+    mutable std::map<int, std::vector<core::Field>> m_fields;
+    int m_focus_page = -1, m_focus_id = -1;
+    sigc::signal<void(int, core::Field)> m_field;
+    void snapshot_fields(GtkSnapshot* s, int page, const core::layout::Rect& r, double ox, double oy);
+    // The crop frame.
+    bool               m_crop_on = false;
+    core::layout::Rect m_crop;
+    struct CropDrag {
+        bool active = false;
+        core::picture::Grip grip = core::picture::Grip::None;   // None: drawing a new frame
+        core::layout::Rect start, before;
+        double px = 0, py = 0;           // the press, picture pixels
+    } m_cdrag;
+    sigc::signal<void(bool)> m_crop_done;
+    sigc::signal<void()> m_crop_changed;
+    void snapshot_crop(GtkSnapshot* s, const core::layout::Rect& r, double ox, double oy);
     void drag_begin(double x, double y, Gtk::GestureDrag* g);
     void drag_update(double dx, double dy);
     void drag_end();

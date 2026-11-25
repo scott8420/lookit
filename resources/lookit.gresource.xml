@@ -15,6 +15,9 @@
     <file preprocess="xml-stripblanks" alias="lookit-tool-highlight-symbolic.svg">icons/scalable/apps/lookit-tool-highlight-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-tool-note-symbolic.svg">icons/scalable/apps/lookit-tool-note-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-tool-box-symbolic.svg">icons/scalable/apps/lookit-tool-box-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-crop-symbolic.svg">icons/scalable/apps/lookit-crop-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-resize-symbolic.svg">icons/scalable/apps/lookit-resize-symbolic.svg</file>
+    <file preprocess="xml-stripblanks" alias="lookit-light-symbolic.svg">icons/scalable/apps/lookit-light-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-tool-ellipse-symbolic.svg">icons/scalable/apps/lookit-tool-ellipse-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-tool-line-symbolic.svg">icons/scalable/apps/lookit-tool-line-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="lookit-tool-arrow-symbolic.svg">icons/scalable/apps/lookit-tool-arrow-symbolic.svg</file>

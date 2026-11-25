@@ -45,9 +45,17 @@ Lookit is installed. How to use it:
   Space in Files            quick look (Lookit's preview instead of Sushi)
   Ctrl+? in the window      every keyboard shortcut
   Pages menu (pencil icon)  rotate, delete, insert, combine, extract,
-                            Add Signature, Markup, Export
+                            Password..., Add Signature, Markup, Export
+  A PDF form                click a field to fill it (Tab: next field);
+                            Ctrl+S saves the values into the PDF
+  A locked PDF              Lookit asks for its password; Pages menu ->
+                            Password... adds, changes or removes one
   Ctrl+Shift+A              markup: highlight, note, box, ellipse, line,
                             arrow, text
+  A picture                 Left / Right walk its folder; the picture bar
+                            rotates, flips, crops, resizes, adjusts light;
+                            Ctrl+S saves, Ctrl+Shift+S saves as PNG / JPEG /
+                            TIFF / BMP / PDF
   lookit --help             command-line options
 
 Uninstall:  $(pwd)/install.sh --uninstall

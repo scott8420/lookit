@@ -23,12 +23,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
 namespace lookit::core {
 
+// How Save locks the file (s011). Keep: as it came -- a password-protected
+// PDF stays protected with its own password, an open one stays open. None:
+// saved open. Password: saved with this password (AES-256), every permission.
+struct Lock {
+    enum class Mode { Keep, None, Password };
+    Mode        mode = Mode::Keep;
+    std::string password;
+    bool operator==(const Lock&) const = default;
+};
+
 struct PageRec {
     int    src = 0;        // index into Pages::sources()
     int    index = 0;      // page number in that source (0-based)
     int    turn = 0;       // quarter turns clockwise, 0..3
     double pos = 0;        // place in the list (ascending)
     std::vector<Mark> marks;     // signatures and markup on this page, bottom to top (core/Marks)
+    // ── the DOCUMENT record only (id Pages::kDoc, s011) ──
+    // What belongs to the whole file, not to a page, rides in one more record
+    // of the same store, so a form value or a password is one undo step in
+    // the same journal as the page tools -- Ctrl+Z walks them all in order.
+    std::map<std::string, std::string> fields;   // form field key -> value (core/Forms)
+    Lock lock;                                   // how Save locks the file
     bool operator==(const PageRec&) const = default;
 };
 
@@ -36,6 +52,9 @@ class Pages {
 public:
     using Id    = int;
     using Value = PageRec;
+    // The document's own record (form values, the lock): always there, never a
+    // page -- ids() / records() / count() leave it out. Page ids start at 1.
+    static constexpr Id kDoc = 0;
 
     // ── the journal's contract ──
     std::optional<PageRec> get(const Id& id) const;
@@ -50,6 +69,7 @@ public:
     Id   fresh_id() { return m_next++; }
     const std::vector<std::string>& sources() const { return m_sources; }
     int  add_source(const std::string& path);          // not a page edit: no step
+    const PageRec& doc() const { return m_doc; }       // the kDoc record
 
     // ── load (not a user choice, not undoable) ──
     void load(const std::string& path, int page_count);
@@ -62,6 +82,7 @@ public:
 
 private:
     std::map<Id, PageRec>    m_items;
+    PageRec                  m_doc;                    // kDoc
     std::vector<std::string> m_sources;
     Id                       m_next = 1;
     int                      m_strays = 0;
@@ -90,6 +111,10 @@ bool add_mark(PageJournal& j, Pages& p, Pages::Id page, const Mark& m);
 // `verb` names the change: "Move", "Resize", "Edit", "Recolour" -> "Move arrow".
 bool set_mark(PageJournal& j, Pages& p, Pages::Id page, int index, const Mark& m, const std::string& verb);
 bool remove_mark(PageJournal& j, Pages& p, Pages::Id page, int index);
+
+// The lock Save writes (s011): one step, "Add password" / "Change password" /
+// "Remove password" / "Keep the file's password".
+bool set_lock(PageJournal& j, Pages& p, const Lock& lock);
 
 // "3-7, 9, 12-" -> 0-based positions, in order, no repeats, within [0, count).
 // Empty -> {}. A bad token -> {} with `error` set.

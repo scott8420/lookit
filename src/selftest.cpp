@@ -24,9 +24,13 @@
 #include "core/Pages.hpp"
 #include "core/Sign.hpp"
 #include "core/Marks.hpp"
+#include "core/Picture.hpp"
+#include "core/Forms.hpp"
+#include "core/Forms.hpp"
 #include <set>
 #include <cstdint>
 #include <cmath>
+#include <chrono>
 
 #include <algorithm>
 #include <filesystem>
@@ -911,6 +915,234 @@ int main() {
                   core::detect((dir / "missing.pdf").string()) == K::Pdf);
             std::filesystem::remove_all(dir);
         }
+    }
+
+    // ── s010: picture tools (core/Picture) ──────────────────────────────────
+    std::cout << "picture\n";
+    {
+        namespace PI = core::picture;
+        using core::PicEdit;
+        const int W = 40, H = 20;   // a wide picture
+        auto near = [](PI::Pt a, PI::Pt b) { return std::abs(a.x - b.x) < 1e-9 && std::abs(a.y - b.y) < 1e-9; };
+        auto rnear = [](const core::layout::Rect& a, const core::layout::Rect& b) {
+            return std::abs(a.x - b.x) < 1e-9 && std::abs(a.y - b.y) < 1e-9 && std::abs(a.w - b.w) < 1e-9 &&
+                   std::abs(a.h - b.h) < 1e-9;
+        };
+        PicEdit e;
+        check("picture: untouched is the picture", PI::out_size(e, W, H) == std::pair{W, H} && PI::unchanged(e));
+        const auto r1 = PI::turned(e, 1, W, H);
+        check("picture: a right turn swaps the sides", PI::out_size(r1, W, H) == std::pair{H, W});
+        check("picture: right turn -- the top-left corner goes top-right",
+              near(PI::orient_point({0, 0}, r1, W, H), {double(H), 0}));
+        check("picture: four turns are none", PI::turned(PI::turned(r1, 1, W, H), 2, W, H) == e);
+        check("picture: left then right is none", PI::turned(PI::turned(e, -1, W, H), 1, W, H) == e);
+
+        // Every flip / turn, from every orientation, must equal mirroring /
+        // turning what you see -- the group arithmetic in flipped().
+        bool group_ok = true;
+        const PI::Pt probes[] = {{0, 0}, {3, 1}, {double(W), 0}, {7, double(H)}, {double(W), double(H)}};
+        for (int t = 0; t < 4; ++t)
+            for (int f = 0; f < 2; ++f) {
+                PicEdit o; o.turn = t; o.flip = f;
+                const auto [ow, oh] = PI::oriented(o, W, H);
+                for (bool horiz : {true, false}) {
+                    const auto fl = PI::flipped(o, horiz, W, H);
+                    for (auto p : probes) {
+                        const auto a = PI::orient_point(p, o, W, H);
+                        const PI::Pt want = horiz ? PI::Pt{ow - a.x, a.y} : PI::Pt{a.x, oh - a.y};
+                        if (!near(PI::orient_point(p, fl, W, H), want)) group_ok = false;
+                    }
+                }
+                const auto tr = PI::turned(o, 1, W, H);
+                for (auto p : probes) {
+                    const auto a = PI::orient_point(p, o, W, H);
+                    if (!near(PI::orient_point(p, tr, W, H), PI::Pt{oh - a.y, a.x})) group_ok = false;
+                }
+            }
+        check("picture: flip / turn from all 8 orientations mirror / turn what you see", group_ok);
+        check("picture: flipping twice is none",
+              PI::flipped(PI::flipped(r1, true, W, H), true, W, H) == r1 &&
+              PI::flipped(PI::flipped(r1, false, W, H), false, W, H) == r1);
+
+        const auto c1 = PI::cropped(e, {10, 5, 20, 10}, W, H);
+        check("picture: crop keeps what you framed",
+              rnear(c1.crop, {10, 5, 20, 10}) && PI::out_size(c1, W, H) == std::pair{20, 10});
+        check("picture: crop the whole picture is no crop", PI::cropped(e, {0, 0, W, H}, W, H) == e);
+        check("picture: a crop under a pixel is refused", PI::cropped(e, {3, 3, 0.4, 5}, W, H) == e);
+        const auto c2 = PI::cropped(c1, {5, 0, 10, 5}, W, H);
+        check("picture: a crop of a crop lands in the picture", rnear(c2.crop, {15, 5, 10, 5}));
+        const auto c1r = PI::turned(c1, 1, W, H);
+        check("picture: a crop turns with the picture",
+              rnear(c1r.crop, {5, 10, 10, 20}) && PI::out_size(c1r, W, H) == std::pair{10, 20});
+        check("picture: a crop mirrors with the picture",
+              rnear(PI::flipped(c1, true, W, H).crop, {10, 5, 20, 10}) &&
+              rnear(PI::flipped(PI::cropped(e, {0, 0, 10, 20}, W, H), true, W, H).crop, {30, 0, 10, 20}));
+
+        const auto z = PI::resized(e, 20, 10, W, H);
+        check("picture: resize", PI::out_size(z, W, H) == std::pair{20, 10});
+        check("picture: resize to its own size is none", PI::resized(z, W, H, W, H) == e);
+        const auto zc = PI::cropped(z, {0, 0, 10, 10}, W, H);   // half the width of the half-size picture
+        check("picture: crop after resize keeps the scale",
+              rnear(zc.crop, {0, 0, 20, 20}) && PI::out_size(zc, W, H) == std::pair{10, 10});
+        check("picture: resize turns with the picture", PI::out_size(PI::turned(z, 1, W, H), W, H) == std::pair{10, 20});
+        check("picture: keep_aspect", PI::keep_aspect(20, 40, 30) == 15 && PI::keep_aspect(1, 4000, 10) == 1);
+
+        // The light pass on ARGB32 pixels.
+        std::uint32_t px[4] = {0xff808080u, 0xffff0000u, 0x00000000u, 0x80404040u};
+        PI::light_argb32(reinterpret_cast<std::uint8_t*>(px), 4, 1, 16, 0, 0, 0);
+        check("picture: no light changes nothing", px[0] == 0xff808080u && px[3] == 0x80404040u);
+        PI::light_argb32(reinterpret_cast<std::uint8_t*>(px), 4, 1, 16, 50, 0, 0);
+        check("picture: brightness lifts grey", (px[0] & 0xff) > 0xb0 && (px[0] >> 24) == 0xff);
+        check("picture: a clear pixel stays clear", px[2] == 0);
+        check("picture: a part-clear pixel keeps its alpha and stays premultiplied",
+              (px[3] >> 24) == 0x80 && (px[3] & 0xff) <= 0x80 && (px[3] & 0xff) > 0x40);
+        std::uint32_t red[1] = {0xffc03030u};
+        PI::light_argb32(reinterpret_cast<std::uint8_t*>(red), 1, 1, 4, 0, 0, -100);
+        check("picture: saturation -100 is grey",
+              ((red[0] >> 16) & 255) == ((red[0] >> 8) & 255) && ((red[0] >> 8) & 255) == (red[0] & 255));
+        std::uint32_t mid[2] = {0xff606060u, 0xffa0a0a0u};
+        PI::light_argb32(reinterpret_cast<std::uint8_t*>(mid), 2, 1, 8, 0, 50, 0);
+        check("picture: contrast pushes away from mid-grey", (mid[0] & 255) < 0x60 && (mid[1] & 255) > 0xa0);
+
+        // The crop frame on screen.
+        const core::layout::Rect f{10, 10, 100, 50};
+        check("picture: crop grips",
+              PI::crop_hit(f, 110, 60, 6) == PI::Grip::BottomRight && PI::crop_hit(f, 11, 9, 6) == PI::Grip::TopLeft &&
+              PI::crop_hit(f, 50, 30, 6) == PI::Grip::Body && PI::crop_hit(f, 300, 300, 6) == PI::Grip::None);
+        check("picture: dragging the frame keeps it on the picture",
+              rnear(PI::crop_drag(f, PI::Grip::Body, 500, -500, 200, 100), {100, 0, 100, 50}));
+        check("picture: a corner sizes, the opposite corner stays",
+              rnear(PI::crop_drag(f, PI::Grip::TopLeft, 20, 5, 200, 100), {30, 15, 80, 45}) &&
+              rnear(PI::crop_drag(f, PI::Grip::BottomRight, -1000, 0, 200, 100), {10, 10, 8, 50}));
+
+        // Browsing the folder.
+        const auto names = PI::sorted({"img10.jpg", "IMG2.png", "img1.jpg", "b.png", "a.png"});
+        check("picture: natural order (img2 before img10, case-blind)",
+              names == std::vector<std::string>{"a.png", "b.png", "img1.jpg", "IMG2.png", "img10.jpg"});
+        check("picture: next / previous, no wrap",
+              PI::step(names, "IMG2.png", +1) == "img10.jpg" && PI::step(names, "IMG2.png", -1) == "img1.jpg" &&
+              PI::step(names, "img10.jpg", +1).empty() && PI::step(names, "a.png", -1).empty() &&
+              PI::step(names, "gone.png", +1).empty());
+        check("picture: 007 sorts as 7", PI::natural_less("p7.png", "p007b.png") && PI::natural_less("p007.png", "p8.png"));
+
+        // The journal: every verb one step, undone exactly, nothing by a side door.
+        core::PicStore st;
+        core::PicJournal j{st};
+        st.set_door([&] { return j.open(); });
+        st.load(W, H);
+        namespace PV = core::pic;
+        const bool ran = PV::rotate(j, st, 1) && PV::flip(j, st, true) && PV::crop(j, st, {2, 2, 10, 10}) &&
+                         PV::resize(j, st, 5, 5);
+        check("picture verbs: rotate, flip, crop, resize are steps", ran && j.undo_label() == "Resize");
+        const auto t0 = std::chrono::steady_clock::now();
+        j.run("Adjust Light", {0}, [&] { st.put(0, PI::with_light(st.edit(), 10, 0, 0)); }, "light-1", t0);
+        j.run("Adjust Light", {0}, [&] { st.put(0, PI::with_light(st.edit(), 20, 0, 0)); }, "light-1",
+              t0 + std::chrono::milliseconds(200));
+        check("picture verbs: slider moves merge into one step", st.edit().brightness == 20 && j.undo_label() == "Adjust Light");
+        j.undo();
+        check("picture verbs: undo the light in one", st.edit().brightness == 0 && st.edit().out_w == 5);
+        check("picture verbs: a no-op is not a step", !PV::resize(j, st, 5, 5) && !PV::rotate(j, st, 4));
+        check("picture verbs: a size of 0 is refused", !PV::resize(j, st, 0, 10));
+        while (j.can_undo()) j.undo();
+        check("picture verbs: undo all is the picture as it came", PI::unchanged(st.edit()));
+        while (j.can_redo()) j.redo();
+        check("picture verbs: redo all comes back", st.edit().out_w == 5 && st.edit().flip);
+        const bool reverted = PV::reset(j, st) && PI::unchanged(st.edit());
+        check("picture verbs: revert is one step", reverted && j.undo().done && st.edit().out_w == 5);
+        check("picture verbs: no write went round the door", st.strays() == 0);
+        st.put(0, PicEdit{});
+        check("picture verbs: the gate sees a stray write", st.strays() == 1);
+    }
+
+    // ── s011: forms and the lock -- the document's own record, same journal ──
+    {
+        using core::Pages;
+        using core::Field;
+        using core::FieldKind;
+        namespace F = core::forms;
+        namespace P = core::pages;
+        Pages pg;
+        core::PageJournal j{pg};
+        pg.set_door([&] { return j.open(); });
+        pg.load("/form.pdf", 2);
+        check("forms: the document record is not a page",
+              pg.count() == 2 && pg.ids().size() == 2 && pg.get(Pages::kDoc).has_value() && pg.id_at(0) != Pages::kDoc);
+        check("forms: a load starts with no values and the file's own lock",
+              pg.doc().fields.empty() && pg.doc().lock.mode == core::Lock::Mode::Keep);
+
+        Field name; name.src = 0; name.id = 1; name.name = "name"; name.kind = FieldKind::Text;
+        name.box = {150, 97, 250, 20}; name.value = "Ann";
+        Field agree; agree.src = 0; agree.id = 2; agree.name = "agree"; agree.kind = FieldKind::Check;
+        agree.box = {150, 139, 16, 16}; agree.value = "0";
+        Field small; small.src = 0; small.id = 3; small.name = "size"; small.kind = FieldKind::Radio;
+        small.box = {250, 179, 16, 16}; small.value = "0";
+        Field large = small; large.id = 4; large.box.x = 300; large.value = "1";
+        Field colour; colour.src = 0; colour.id = 5; colour.name = "colour"; colour.kind = FieldKind::Combo;
+        colour.options = {"Red", "Green", "Blue"}; colour.value = "#1"; colour.box = {150, 217, 150, 20};
+        Field locked = name; locked.id = 6; locked.name = "id"; locked.read_only = true;
+        const std::vector<Field> all{name, agree, small, large, colour, locked};
+        auto val = [&](const Field& f) {
+            const auto it = pg.doc().fields.find(F::key(f.src, f.id));
+            return it == pg.doc().fields.end() ? f.value : it->second;
+        };
+
+        check("forms: fill in a text field is one step",
+              F::set(j, pg, name, all, "Bob") && val(name) == "Bob" && j.undo_label() == "Fill in “name”");
+        check("forms: the same words again is no step", !F::set(j, pg, name, all, "Bob"));
+        check("forms: tick a box", F::set(j, pg, agree, all, F::on(true)) && F::is_on(val(agree)) &&
+                                   j.undo_label() == "Tick “agree”");
+        check("forms: a radio turns the rest of its group off",
+              F::set(j, pg, small, all, F::on(true)) && val(small) == "1" && val(large) == "0");
+        check("forms: choosing the radio that's on is no step", !F::set(j, pg, small, all, F::on(true)));
+        check("forms: a drop-down takes an item by number",
+              F::set(j, pg, colour, all, F::picks({2})) && F::shown(colour, val(colour)) == "Blue");
+        check("forms: a read-only field is refused", !F::set(j, pg, locked, all, "x") && !F::fillable(locked));
+        check("forms: four steps, undone in order",
+              j.undo().done && val(colour) == "#1" && j.undo().done && val(small) == "0" && val(large) == "1" &&
+              j.undo().done && val(agree) == "0" && j.undo().done && val(name) == "Ann");
+        check("forms: redo all brings them back", j.redo().done && j.redo().done && j.redo().done && j.redo().done &&
+                                                  val(name) == "Bob" && val(small) == "1" && F::changed(pg) == 5);
+        check("forms: page edits and fills share one journal",
+              P::rotate(j, pg, {pg.id_at(1)}, 1) && j.undo().done && j.undo_label() == "Choose “colour”");
+        check("forms: clear puts the file's value back in one step",
+              F::reset(j, pg, name, all) && val(name) == "Ann" && j.undo_label() == "Clear “name”" &&
+              !F::reset(j, pg, name, all));
+        check("forms: a page delete leaves the values alone",
+              P::remove(j, pg, {pg.id_at(0)}) && val(small) == "1" && j.undo().done);
+
+        // Values: encodings and what a person reads.
+        check("forms: picks sort and drop repeats", F::picks({2, 0, 2}) == "#0,2" && F::picked("#0,2") == std::vector<int>{0, 2});
+        check("forms: picked ignores what isn't picks", F::picked("Blue").empty() && F::picked("#").empty() &&
+                                                        F::picked("#1,x,3") == std::vector<int>{1, 3});
+        check("forms: typed words in a combo", F::is_typed(F::typed("Teal")) && F::typed_words("=Teal") == "Teal" &&
+                                               F::shown(colour, "=Teal") == "Teal");
+        check("forms: shown for a list and a box", F::shown(colour, "#0,1") == "Red, Green" && F::shown(agree, "1") == "on");
+
+        // Hit and Tab order.
+        Field inner = colour; inner.id = 9; inner.box = {160, 220, 20, 10};
+        check("forms: hit finds the field under the point", F::hit(all, 151, 100) == 0 && F::hit(all, 10, 10) < 0);
+        check("forms: a field inside another wins", F::hit({colour, inner}, 165, 225) == 1);
+        std::vector<std::pair<int, Field>> tab{{1, name}, {0, large}, {0, small}, {0, name}};
+        tab[2].second.box.y = 180.5;   // small sits on large's line, a hair lower
+        check("forms: Tab goes by page, line, then left to right", F::tab_order(tab) == std::vector<int>{3, 2, 1, 0});
+
+        // The lock.
+        using L = core::Lock;
+        check("lock: add a password is one step",
+              P::set_lock(j, pg, {L::Mode::Password, "s3cret"}) && pg.doc().lock.password == "s3cret" &&
+              j.undo_label() == "Add password");
+        check("lock: an empty password is refused", !P::set_lock(j, pg, {L::Mode::Password, ""}));
+        check("lock: change it", P::set_lock(j, pg, {L::Mode::Password, "other"}) && j.undo_label() == "Change password");
+        check("lock: remove it", P::set_lock(j, pg, {L::Mode::None, ""}) && j.undo_label() == "Remove password");
+        check("lock: the same lock again is no step", !P::set_lock(j, pg, {L::Mode::None, ""}));
+        check("lock: undo walks back to the file's own",
+              j.undo().done && j.undo().done && j.undo().done && pg.doc().lock.mode == L::Mode::Keep);
+        check("lock: the form values survive the lock's steps", val(name) == "Ann" && val(small) == "1");
+        check("forms: no write went round the door", pg.strays() == 0);
+        auto d = pg.doc();
+        d.fields["0:1"] = "sneak";
+        pg.put(Pages::kDoc, d);
+        check("forms: the gate sees a stray write to the document record", pg.strays() == 1);
     }
 
     std::cout << "-----------------------------------------------\n";
