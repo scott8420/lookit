@@ -82,6 +82,8 @@ add_library(lookit_core STATIC
     src/core/Book.cpp
     # s014: the skin's base colour -- every literal turned in OKLCH, lightness kept.
     src/core/Tint.cpp
+    # s015: thumbnail sizes (Small / Medium / Large), remembered next to the colour.
+    src/core/ThumbSize.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail

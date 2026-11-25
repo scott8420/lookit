@@ -1,5 +1,7 @@
 #include "Shell.hpp"
+#include "App.hpp"
 #include "Log.hpp"
+#include "core/ThumbSize.hpp"
 
 #include <gdkmm/contentformats.h>
 #include <giomm/file.h>
@@ -36,6 +38,7 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
         on = !on;
         m_act_book->change_state(on);
         m_doc_view.set_book(on);
+        m_thumbs.set_book(on);   // s015: the strip pairs its thumbnails the same way
     }, false);
     // Thumbnails: stateful (the toolbar toggle and the menu check follow it).
     // On by default; a one-page file never shows the strip (sync_view_bar).
@@ -45,6 +48,28 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
         m_act_thumbs->change_state(!on);
         sync_view_bar();
     }, true);
+    // s015: the header's sidebar button (and F8) -- Home / View slide away
+    // for a full view. Thumbnails keep their own toggle (Ctrl+T).
+    m_act_sidebar = add_action_bool("sidebar", [this] {
+        bool on = true;
+        m_act_sidebar->get_state(on);
+        on = !on;
+        m_act_sidebar->change_state(on);
+        m_side_rev.set_reveal_child(on);
+    }, true);
+    // s015: thumbnail size -- View > Thumbnail Size > Small / Medium / Large,
+    // remembered in settings.json next to the base colour.
+    {
+        const auto size = core::load_thumb_size(App::settings_file());
+        m_thumbs.set_size(size);
+        m_act_thumb_size = add_action_radio_string("thumb-size", [this](const Glib::ustring& id) {
+            core::ThumbSize s;
+            if (!core::parse_thumb_size(id, s)) return;
+            m_act_thumb_size->change_state(id);
+            m_thumbs.set_size(s);
+            core::save_thumb_size(App::settings_file(), s);
+        }, core::thumb_size_id(size));
+    }
     // Continuous scrolling: off by default -- View shows the page (or the
     // facing pair) fitted to the window, and turns pages (Scott, s005).
     m_act_continuous = add_action_bool("continuous", [this] {

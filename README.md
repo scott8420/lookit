@@ -5,7 +5,7 @@ view, mark up, rearrange and sign PDFs; view and lightly edit images; and a
 spacebar quick look, in Lookit and in Files.
 
 **Status:** early. Opens and shows PDFs and pictures: paged or continuous,
-zoom (keys, Ctrl+wheel, pinch), fit width / fit window, thumbnails, find,
+zoom (keys, Ctrl+wheel, pinch), fit width / fit window, thumbnails (three sizes, paired in Book view), find,
 recent files, drag-and-drop. Page tools, signatures and export (below).
 
 ## Build & run

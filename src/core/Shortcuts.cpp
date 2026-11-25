@@ -110,6 +110,7 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // ── Drawers ───────────────────────────────────────────────────────────
         {"Drawers", "win.toggle-left-drawer",  {"F9"},        "", "Help drawer (left) -- open / close"},
         {"Drawers", "win.toggle-right-drawer", {"<Shift>F9"}, "", "Info drawer (right) -- open / close"},
+        {"Drawers", "win.sidebar",             {"F8"},        "", "Sidebar (Home / View) -- show / hide, for a full view"},
         // Doc-only: Esc is heard by the window, and only while a drawer is open.
         {"Drawers", "", {}, "Esc", "Close the open drawer"},
 

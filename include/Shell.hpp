@@ -13,6 +13,7 @@
 #include <gtkmm/popover.h>
 #include <gtkmm/textview.h>
 #include <gtkmm/togglebutton.h>
+#include <gtkmm/revealer.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/menubutton.h>
 #include <gtkmm/scale.h>
@@ -200,6 +201,7 @@ private:
     // Body: our own sidebar | overlay(stack + drawers + toast)
     widgets::Box     m_body;
     widgets::Box     m_side;
+    Gtk::Revealer    m_side_rev;   // s015: the header's sidebar button slides m_side away
     widgets::ListBox m_nav;
     widgets::Stack   m_stack;
     std::string      m_page;                     // the page whose tint is on
@@ -243,7 +245,9 @@ private:
     Glib::RefPtr<Gio::SimpleAction> m_recents_clear;
     Glib::RefPtr<Gio::SimpleAction> m_act_zoom_in, m_act_zoom_out, m_act_zoom_actual,
                                     m_act_fit_width, m_act_fit_page, m_act_info, m_act_book,
-                                    m_act_thumbs, m_act_find, m_act_continuous;
+                                    m_act_thumbs, m_act_find, m_act_continuous,
+                                    m_act_thumb_size,   // s015: small / medium / large
+                                    m_act_sidebar;      // s015: show / hide the left sidebar
 
     // Drawers (left: help, right: info) + toast, over the stack
     core::Drawers     m_drawers;

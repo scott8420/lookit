@@ -32,6 +32,13 @@ void Shell::build_shell() {  // zone: window, header, sidebar, overlay
     m_logo_button.set_action_name("win.about");
     header->pack_start(m_logo_button);
 
+    // s015: hide the sidebar (Home / View) for a full view, as GNOME apps do.
+    auto* side = Gtk::make_managed<Gtk::ToggleButton>();
+    side->set_icon_name("sidebar-show-symbolic");
+    side->set_tooltip_text("Sidebar (F8)");
+    side->set_action_name("win.sidebar");
+    header->pack_start(*side);
+
     auto* open = Gtk::make_managed<Gtk::Button>();
     open->set_icon_name("document-open-symbolic");
     open->set_tooltip_text("Open… (Ctrl+O)");
@@ -68,7 +75,11 @@ void Shell::build_shell() {  // zone: window, header, sidebar, overlay
     m_toast.set_can_target(false);
     m_overlay.add_overlay(m_toast);
 
-    m_body.append(m_side);
+    m_side_rev.set_transition_type(Gtk::RevealerTransitionType::SLIDE_RIGHT);
+    m_side_rev.set_transition_duration(160);
+    m_side_rev.set_reveal_child(true);
+    m_side_rev.set_child(m_side);
+    m_body.append(m_side_rev);
     m_body.append(m_overlay);
     set_child(m_body);
 }
@@ -440,12 +451,18 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     view->append("Fit Window", "win.fit-page");
     view->append("Book View", "win.book");
     view->append("Thumbnails", "win.thumbs");
+    auto sizes = Gio::Menu::create();   // s015
+    sizes->append("Small", "win.thumb-size::small");
+    sizes->append("Medium", "win.thumb-size::medium");
+    sizes->append("Large", "win.thumb-size::large");
+    view->append_submenu("Thumbnail Size", sizes);
     view->append("Continuous Scrolling", "win.continuous");
     view->append("Find…", "win.find");
     view->append("Go to Page…", "win.go-to-page");
     menu->append_section(view);
 
     auto panels = Gio::Menu::create();
+    panels->append("Sidebar", "win.sidebar");
     panels->append("Help", "win.toggle-left-drawer");
     panels->append("Info", "win.toggle-right-drawer");
     menu->append_section(panels);

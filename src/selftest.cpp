@@ -30,6 +30,7 @@
 #include "core/Zip.hpp"
 #include "core/Forms.hpp"
 #include "core/Tint.hpp"
+#include "core/ThumbSize.hpp"
 #include "Css.hpp"   // plain text, no GTK: the skin the tint turns
 #include <regex>
 #include <set>
@@ -308,6 +309,63 @@ int main() {
         for (const auto& r : core::shortcut_registry())
             if (r.action == "win.toggle-left-drawer" || r.action == "win.toggle-right-drawer") ++wired;
         check("drawers: both toggles have a registered key", wired == 2);
+        {   // s015: the sidebar button's key, and no key bound twice
+            int side = 0;
+            std::set<std::string> seen; bool unique = true;
+            for (const auto& r : core::shortcut_registry()) {
+                if (r.action == "win.sidebar" && !r.accels.empty()) ++side;
+                for (const auto& a : r.accels) if (!seen.insert(a).second) unique = false;
+            }
+            check("sidebar: the header's sidebar toggle has a key (F8)", side == 1);
+            check("shortcuts: no accelerator is bound to two actions", unique);
+        }
+    }
+
+    // ── s015: thumbnail sizes, and the strip's pairs in Book View ───────────
+    {
+        using core::ThumbSize; using core::thumb_width; using core::thumb_strip_width;
+        check("thumbs: medium is the s004 width (112) and the default",
+              thumb_width(ThumbSize::Medium, false) == 112 && core::kDefaultThumbSize == ThumbSize::Medium);
+        check("thumbs: small < medium < large, in one column and in pairs",
+              thumb_width(ThumbSize::Small, false) < thumb_width(ThumbSize::Medium, false) &&
+              thumb_width(ThumbSize::Medium, false) < thumb_width(ThumbSize::Large, false) &&
+              thumb_width(ThumbSize::Small, true) < thumb_width(ThumbSize::Medium, true) &&
+              thumb_width(ThumbSize::Medium, true) < thumb_width(ThumbSize::Large, true));
+        check("thumbs: a pair is narrower per page, but wider as a strip, than one column",
+              [] { for (auto s : {ThumbSize::Small, ThumbSize::Medium, ThumbSize::Large})
+                       if (!(thumb_width(s, true) < thumb_width(s, false) &&
+                             thumb_strip_width(s, true) > thumb_strip_width(s, false))) return false;
+                   return true; }());
+        check("thumbs: the strip holds a row exactly (two pages + the spine + 44)",
+              thumb_strip_width(ThumbSize::Medium, true) == 2 * thumb_width(ThumbSize::Medium, true) + core::kThumbSpine + 44 &&
+              thumb_strip_width(ThumbSize::Medium, false) == 112 + 44);
+        ThumbSize s = ThumbSize::Small;
+        check("thumbs: ids round-trip; an unknown id leaves the size alone",
+              core::parse_thumb_size("large", s) && s == ThumbSize::Large &&
+              !core::parse_thumb_size("huge", s) && s == ThumbSize::Large &&
+              std::string(core::thumb_size_id(ThumbSize::Small)) == "small");
+        // The strip's rows ARE the view's rows: cover alone on the right, then pairs.
+        const auto r = core::layout::rows(6, core::layout::Mode::Book);
+        check("thumbs: Book rows -- [_|1] [2|3] [4|5] [6|_]",
+              r.size() == 4 && r[0].left == -1 && r[0].right == 0 && r[1].left == 1 && r[1].right == 2 &&
+              r[3].left == 5 && r[3].right == -1);
+
+        const auto dir = std::filesystem::temp_directory_path() / "lookit_selftest_thumbs";
+        std::filesystem::remove_all(dir);
+        const std::string f = (dir / "lookit" / "settings.json").string();
+        check("thumbs: first run -- no file, medium", core::load_thumb_size(f) == ThumbSize::Medium);
+        check("thumbs: save makes the folder and round-trips",
+              core::save_thumb_size(f, ThumbSize::Large) && core::load_thumb_size(f) == ThumbSize::Large);
+        core::save_tint(f, "#e64980");
+        check("thumbs: the colour and the size share the file without trampling",
+              core::load_thumb_size(f) == ThumbSize::Large && core::load_tint(f) == "#e64980");
+        core::save_thumb_size(f, ThumbSize::Small);
+        check("thumbs: ...both ways", core::load_thumb_size(f) == ThumbSize::Small && core::load_tint(f) == "#e64980");
+        { std::ofstream o(f); o << "{\"thumb_size\":\"enormous\"}"; }
+        check("thumbs: an unknown size in the file -> medium", core::load_thumb_size(f) == ThumbSize::Medium);
+        { std::ofstream o(f); o << "[1,2"; }
+        check("thumbs: a broken file -> medium, no throw", core::load_thumb_size(f) == ThumbSize::Medium);
+        std::filesystem::remove_all(dir);
     }
 
     std::cout << "-----------------------------------------------\n";

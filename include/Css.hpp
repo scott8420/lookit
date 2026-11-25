@@ -115,6 +115,8 @@ inline const char* LOOKIT_CSS = R"CSS(
     .thumb.dragging { opacity: 0.4; }
     .thumb.drop-before { border-top: 3px solid #99e9f2; }
     .thumb.drop-after  { border-bottom: 3px solid #99e9f2; }
+    .thumbs.book .thumb.drop-before { border-top: none; border-left: 3px solid #99e9f2; }
+    .thumbs.book .thumb.drop-after  { border-bottom: none; border-right: 3px solid #99e9f2; }
     .thumb-num { font-size: 0.8em; color: rgba(238,248,250,0.65); font-feature-settings: "tnum"; }
     lookit-canvas:focus-visible { outline: none; }
 

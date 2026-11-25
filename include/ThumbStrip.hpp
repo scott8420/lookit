@@ -1,5 +1,7 @@
 #pragma once
 #include "Document.hpp"
+#include "core/Layout.hpp"
+#include "core/ThumbSize.hpp"
 
 #include <gtkmm/listview.h>
 #include <gtkmm/picture.h>
@@ -24,6 +26,11 @@
 // view's page comes back through set_current, which selects and scrolls to it
 // without echoing a pick. Thumbnails are drawn on a thread of their own from
 // the document's twin (s014.2), so a slow page never stalls the window.
+//
+// s015: one ROW of the list is one row of the view's arrangement
+// (core::layout::rows). In Book View that is a facing pair -- the cover alone on
+// the right, then 2|3, 4|5 -- so the strip reads like the spreads you see. The
+// thumbnails come in three sizes (core::ThumbSize); the strip's width follows.
 // ─────────────────────────────────────────────────────────────────────────────
 namespace lookit {
 
@@ -35,6 +42,9 @@ public:
 
     void set_document(std::shared_ptr<Document> doc);
     void set_current(int page);
+    void set_book(bool on);                 // pair the thumbnails like Book View
+    void set_size(core::ThumbSize s);       // Small / Medium / Large
+    core::ThumbSize size() const { return m_size; }
     sigc::signal<void(int)>& signal_pick() { return m_pick; }
     // Drag-and-drop (when editable): a thumbnail dragged to a new place, and
     // files dropped between thumbnails -- `to` is the position to insert before.
@@ -48,12 +58,15 @@ private:
     void request(int page);   // draw it soon (thread, else idle)
     void forget(int page);    // its row went away: don't bother
     int focus() const;        // the page at the middle of the strip now
-    void deliver(int page, const Glib::RefPtr<Gdk::Texture>& t);
-    static void show(Gtk::Picture* pic, const Glib::RefPtr<Gdk::Texture>& t);
+    void deliver(int page, const Glib::RefPtr<Gdk::Texture>& t, int width);
+    void show(Gtk::Picture* pic, const Glib::RefPtr<Gdk::Texture>& t) const;
     void drop_job();
-    static void run(std::shared_ptr<Job> job, int width);
-
-    static constexpr int kWidth = 112;   // thumbnail width in logical px
+    static void run(std::shared_ptr<Job> job);
+    void rebuild();                         // rows from the document + mode, keep the page
+    void bind_cell(Gtk::Widget* cell, int page, int partner);
+    void unbind_cell(Gtk::Widget* cell);
+    int  width() const { return core::thumb_width(m_size, m_book); }   // one page, logical px
+    core::layout::Mode mode() const { return m_book ? core::layout::Mode::Book : core::layout::Mode::Continuous; }
 
     Gtk::ListView m_list;
     Glib::RefPtr<Gtk::StringList> m_pages;
@@ -63,6 +76,10 @@ private:
     std::map<int, Gtk::Picture*> m_bound;   // page -> the row showing it now
     std::shared_ptr<Job> m_job;             // this document's thread, if any
     std::vector<std::pair<std::shared_ptr<Job>, std::thread>> m_threads;
+    std::vector<core::layout::Row> m_rows;  // s015: the list's rows
+    bool m_book = false;
+    core::ThumbSize m_size = core::kDefaultThumbSize;
+    int m_current = 0;                      // the page the view is on
     std::deque<int> m_idle_want;            // no twin: drawn on idle instead
     sigc::connection m_idle;
     bool m_syncing = false;
