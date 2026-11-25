@@ -1,4 +1,5 @@
 #include "Document.hpp"
+#include "Books.hpp"
 #include "Log.hpp"
 #include "MarkArt.hpp"
 
@@ -222,6 +223,7 @@ public:
         core::search::sort(out);
         return out;
     }
+    bool searchable() const override { return true; }
     std::vector<core::Mark> marks(int i) const override { return m_pages.at(std::size_t(i)).marks; }
     std::vector<core::Field> fields(int i) const override {
         std::vector<core::Field> out;
@@ -487,11 +489,9 @@ std::unique_ptr<Document> Document::open(const std::string& path, std::string& e
     switch (k) {
         case core::Kind::Pdf:   return open_pdf(path, error);
         case core::Kind::Image: return open_image(path, error);
-        case core::Kind::DjVu:
-        case core::Kind::Epub:
-        case core::Kind::Cbz:
-            error = std::string(core::kind_label(k)) + " files are on the road but not here yet.";
-            return nullptr;
+        case core::Kind::DjVu:  return books::open_djvu(path, error);   // s012 (Books.cpp)
+        case core::Kind::Epub:  return books::open_epub(path, error);
+        case core::Kind::Cbz:   return books::open_cbz(path, error);
         default:
             error = "Lookit doesn't know what kind of file this is.";
             return nullptr;

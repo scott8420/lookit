@@ -79,6 +79,8 @@ public:
     // Every place `text` occurs on `page` (case-blind), in page units, top-left
     // origin. Kinds with no text layer find nothing.
     virtual std::vector<core::search::Hit> find(int /*page*/, const std::string& /*text*/) const { return {}; }
+    // Find and text export work here (a text layer: PDF, DjVu, EPUB).
+    virtual bool searchable() const { return false; }
     // The form fields on `page` (s011): unturned frame, values as shown now.
     virtual std::vector<core::Field> fields(int /*page*/) const { return {}; }
     // Every field of every page, with its page -- Tab order, radio groups.

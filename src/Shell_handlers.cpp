@@ -89,8 +89,15 @@ void Shell::on_open() {  // handler: the Open dialog
     all->set_name("PDFs and pictures");
     all->add_mime_type("application/pdf");
     all->add_pixbuf_formats();
-    for (const char* p : {"*.pdf", "*.PDF", "*.heic", "*.avif", "*.webp", "*.jxl"}) all->add_pattern(p);
+    for (const char* p : {"*.pdf", "*.PDF", "*.heic", "*.avif", "*.webp", "*.jxl", "*.djvu", "*.djv", "*.DJVU",
+                          "*.cbz", "*.CBZ", "*.epub", "*.EPUB"})
+        all->add_pattern(p);
+    all->set_name("PDFs, pictures, DjVu, comics and books");
     filters->append(all);
+    auto books = Gtk::FileFilter::create();   // s012
+    books->set_name("DjVu, comics (CBZ) and books (EPUB)");
+    for (const char* p : {"*.djvu", "*.djv", "*.DJVU", "*.cbz", "*.CBZ", "*.epub", "*.EPUB"}) books->add_pattern(p);
+    filters->append(books);
     auto pdf = Gtk::FileFilter::create();
     pdf->set_name("PDF");
     pdf->add_mime_type("application/pdf");

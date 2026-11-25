@@ -17,8 +17,10 @@ recent files, drag-and-drop. Page tools, signatures and export (below).
 ./build/lookit_savecheck     # a saved signature lands where it was seen (headless)
 ```
 
-Deps (Fedora): `gtkmm4.0-devel spdlog-devel poppler-glib-devel qpdf-devel cmake gcc-c++`.
-Deps (Ubuntu/Debian): `libgtkmm-4.0-dev libspdlog-dev libpoppler-glib-dev libqpdf-dev cmake g++`.
+Deps (Fedora): `gtkmm4.0-devel spdlog-devel poppler-glib-devel qpdf-devel djvulibre-devel cmake gcc-c++`.
+Deps (Ubuntu/Debian): `libgtkmm-4.0-dev libspdlog-dev libpoppler-glib-dev libqpdf-dev libdjvulibre-dev cmake g++`.
+(s012 added djvulibre, for DjVu. `lookit_savecheck` also makes a DjVu with djvulibre's
+tools -- `djvulibre` / `djvulibre-bin` -- and skips that part without them.)
 
 ## Page tools
 
@@ -63,6 +65,17 @@ its lock and password. Pages menu -> Password... adds a password (AES-256),
 changes it, or removes it; the change is one Ctrl+Z and is written by the
 next Save. The Info drawer (Shift+F9) says whether the PDF has a password
 and how many fields its form has.
+
+## DjVu, comics and books
+
+DjVu files open like PDFs: pages, thumbnails, Book view, zoom, export, and
+Ctrl+F when the file has a text layer (scanned books often do). Comics (CBZ)
+open as their pictures, one per page, in name order ("page2" before
+"page10"). EPUB books show their cover, then the chapters' text laid out on
+6 x 9 in pages (headings and paragraphs -- a look inside, not a reading app:
+no styles or pictures inside chapters yet); Ctrl+F finds words in them.
+These are for reading: the page tools, markup and Save are for PDFs. Space in
+Files shows all three too.
 
 ## Pictures
 

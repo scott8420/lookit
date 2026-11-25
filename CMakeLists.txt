@@ -21,6 +21,8 @@ pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
 pkg_check_modules(POPPLER REQUIRED poppler-glib)
 # Saving edited PDFs: qpdf (Fedora: qpdf-devel; Ubuntu: libqpdf-dev).
 pkg_check_modules(QPDF REQUIRED libqpdf)
+# DjVu (s012): djvulibre (Fedora: djvulibre-devel; Ubuntu: libdjvulibre-dev).
+pkg_check_modules(DJVU REQUIRED ddjvuapi)
 find_package(spdlog REQUIRED)
 
 # ── lookit_core -- the GTK-free core (the model side of the one real seam) ──────
@@ -56,6 +58,10 @@ add_library(lookit_core STATIC
     src/core/Picture.cpp
     # s011: form fields -- their shape, value encoding, and the fill verb.
     src/core/Forms.cpp
+    # s012: ZIP reading (CBZ, EPUB) and books -- comic pages, EPUB package and
+    # chapter text, DjVu word search.
+    src/core/Zip.cpp
+    src/core/Book.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
@@ -103,6 +109,7 @@ add_executable(lookit
     # GSettings calls are GIO, which gtkmm-4.0 already brings in.
     src/Appearance.cpp
     src/Document.cpp
+    src/Books.cpp
     src/DocView.cpp
     src/ThumbStrip.cpp
     src/Save.cpp
@@ -126,9 +133,9 @@ add_executable(lookit
     src/Registry.cpp
     src/Log.cpp
 )
-target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
-target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
-target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
+target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${DJVU_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
+target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${DJVU_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
 target_compile_options(lookit    PRIVATE ${GTKMM_CFLAGS_OTHER})
 
 # ── lookit-peek -- the spacebar quick look for Files (s005) ─────────────────────
@@ -138,13 +145,14 @@ target_compile_options(lookit    PRIVATE ${GTKMM_CFLAGS_OTHER})
 add_executable(lookit-peek
     src/peek/main.cpp
     src/Document.cpp
+    src/Books.cpp
     src/MarkArt.cpp
     src/DocView.cpp
     src/Log.cpp
 )
-target_include_directories(lookit-peek PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS})
-target_link_libraries(lookit-peek     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} lookit_core spdlog::spdlog)
-target_link_directories(lookit-peek   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS})
+target_include_directories(lookit-peek PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${DJVU_INCLUDE_DIRS})
+target_link_libraries(lookit-peek     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit-peek   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${DJVU_LIBRARY_DIRS})
 target_compile_options(lookit-peek    PRIVATE ${GTKMM_CFLAGS_OTHER})
 
 # ── lookit_savecheck -- does a saved signature land where it was seen? (s008) ──
@@ -154,13 +162,14 @@ target_compile_options(lookit-peek    PRIVATE ${GTKMM_CFLAGS_OTHER})
 add_executable(lookit_savecheck
     tools/save_check.cpp
     src/Document.cpp
+    src/Books.cpp
     src/MarkArt.cpp
     src/PictureArt.cpp
     src/Export.cpp
     src/Save.cpp
     src/Log.cpp
 )
-target_include_directories(lookit_savecheck PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
-target_link_libraries(lookit_savecheck     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
-target_link_directories(lookit_savecheck   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
+target_include_directories(lookit_savecheck PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${DJVU_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
+target_link_libraries(lookit_savecheck     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit_savecheck   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${DJVU_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
 target_compile_options(lookit_savecheck    PRIVATE ${GTKMM_CFLAGS_OTHER})

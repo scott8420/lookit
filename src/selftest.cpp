@@ -26,6 +26,8 @@
 #include "core/Marks.hpp"
 #include "core/Picture.hpp"
 #include "core/Forms.hpp"
+#include "core/Book.hpp"
+#include "core/Zip.hpp"
 #include "core/Forms.hpp"
 #include <set>
 #include <cstdint>
@@ -1143,6 +1145,94 @@ int main() {
         d.fields["0:1"] = "sneak";
         pg.put(Pages::kDoc, d);
         check("forms: the gate sees a stray write to the document record", pg.strays() == 1);
+    }
+
+    // ── s012: books and comics -- ZIP, comic pages, EPUB, DjVu words ─────────
+    {
+        namespace Z = core::zip;
+        namespace C = core::comic;
+        namespace E = core::epub;
+        namespace W = core::words;
+        const std::string png = std::string("\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\x02\x58\0\0\x03\x84", 24);   // 600 x 900
+        const std::string arc = Z::make_stored({{"Comic/", ""},
+                                                {"Comic/page10.png", png},
+                                                {"Comic/page2.png", png},
+                                                {"__MACOSX/Comic/._page2.png", "junk"},
+                                                {"Comic/.thumb.jpg", "junk"},
+                                                {"Comic/notes.txt", "hello"},
+                                                {"Comic/page1.PNG", png}});
+        std::string err;
+        const auto es = Z::list(arc, err);
+        check("zip: the directory lists every entry", es.size() == 7 && err.empty() && es[0].dir());
+        const auto body = Z::raw(arc, es[size_t(Z::find(es, "Comic/notes.txt"))]);
+        check("zip: an entry's bytes come back", body && *body == "hello" && es[5].method == 0 && es[5].size == 5);
+        check("zip: find by name, or -1", Z::find(es, "Comic/page2.png") == 2 && Z::find(es, "nope") == -1);
+        std::string e2;
+        check("zip: not an archive is refused", Z::list("just some text, not a zip file at all", e2).empty() && !e2.empty());
+        std::string e3;
+        check("zip: a cut-short archive is refused", Z::list(arc.substr(0, arc.size() - 30), e3).empty() && !e3.empty());
+        const auto order = C::pages(es);
+        std::string names;
+        for (int i : order) names += es[size_t(i)].name + " ";
+        check("comic: pictures only, natural order, leftovers skipped",
+              names == "Comic/page1.PNG Comic/page2.png Comic/page10.png ", names);
+        auto sz = C::image_size(png);
+        check("comic: PNG size from its header", sz && sz->first == 600 && sz->second == 900);
+        const std::string gif = std::string("GIF89a\x40\x01\xf0\x00", 10);
+        sz = C::image_size(gif);
+        check("comic: GIF size", sz && sz->first == 320 && sz->second == 240);
+        // A JPEG: SOI, an APP0 segment, then SOF0 with 1200 x 800 (h first).
+        const std::string jpg = std::string("\xff\xd8\xff\xe0\x00\x04\x00\x00\xff\xc0\x00\x0b\x08\x03\x20\x04\xb0\x01\x01\x11\x00", 21);
+        sz = C::image_size(jpg);
+        check("comic: JPEG size from its frame header", sz && sz->first == 1200 && sz->second == 800);
+        std::string bmp(26, '\0');
+        bmp[0] = 'B'; bmp[1] = 'M'; bmp[18] = 100; bmp[22] = char(0xce); bmp[23] = char(0xff); bmp[24] = char(0xff); bmp[25] = char(0xff);
+        sz = C::image_size(bmp);
+        check("comic: BMP size, top-down height", sz && sz->first == 100 && sz->second == 50);
+        check("comic: an unknown kind gives no size", !C::image_size("hello there, not a picture at all"));
+
+        check("epub: resolve folds ../ and decodes",
+              E::resolve("OEBPS/content.opf", "Text/ch%201.xhtml#top") == "OEBPS/Text/ch 1.xhtml" &&
+              E::resolve("OEBPS/Text/a.xhtml", "../Images/c.jpg") == "OEBPS/Images/c.jpg" &&
+              E::resolve("content.opf", "/abs/x.html") == "abs/x.html");
+        const std::string container =
+            "<?xml version=\"1.0\"?><container><rootfiles>"
+            "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+            "</rootfiles></container>";
+        check("epub: container.xml names the package", E::package_path(container) == "OEBPS/content.opf");
+        const std::string opf =
+            "<package><metadata><dc:title>The  Lighthouse &amp; Sea</dc:title>"
+            "<meta name=\"cover\" content=\"cov\"/></metadata><manifest>"
+            "<item id=\"c1\" href=\"Text/one.xhtml\" media-type=\"application/xhtml+xml\"/>"
+            "<item id=\"c2\" href=\"Text/two.xhtml\" media-type=\"application/xhtml+xml\"/>"
+            "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\"/>"
+            "<item id=\"cov\" href=\"Images/cover.jpg\" media-type=\"image/jpeg\"/></manifest>"
+            "<spine><itemref idref=\"c2\"/><itemref idref=\"nav\" linear=\"no\"/><itemref idref=\"c1\"/></spine></package>";
+        const auto pk = E::parse_package(opf, "OEBPS/content.opf");
+        check("epub: title, spine order (non-linear left out)",
+              pk.title == "The Lighthouse & Sea" &&
+              pk.spine == std::vector<std::string>{"OEBPS/Text/two.xhtml", "OEBPS/Text/one.xhtml"}, pk.title);
+        check("epub: the EPUB 2 cover", pk.cover == "OEBPS/Images/cover.jpg");
+        const auto pk3 = E::parse_package(
+            "<package><manifest><item id=\"x\" href=\"c.png\" media-type=\"image/png\" properties=\"cover-image\"/>"
+            "</manifest><spine/></package>", "content.opf");
+        check("epub: the EPUB 3 cover", pk3.cover == "c.png" && pk3.spine.empty());
+        const auto bl = E::blocks(
+            "<html><head><title>skip me</title><style>p{}</style></head><body>"
+            "<h1>Chapter  One</h1><p>It was a <i>dark</i>\n and stormy night&#8212;truly.</p>"
+            "<p>Line one<br/>line two &amp; more</p><script>var x;</script><!-- gone --><div>Last</div></body></html>");
+        std::vector<E::Block> want{{true, "Chapter One"}, {false, "It was a dark and stormy night—truly."},
+                                   {false, "Line one"}, {false, "line two & more"}, {false, "Last"}};
+        check("epub: blocks -- headings, paragraphs, entities, head / script / comments skipped", bl == want,
+              bl.empty() ? "" : bl[0].text);
+
+        std::vector<W::Word> ws{{"The", {10, 10, 20, 10}}, {"quick", {35, 10, 30, 10}}, {"Brown", {70, 10, 30, 10}},
+                                {"fox", {10, 30, 20, 10}}, {"jumps", {35, 30, 30, 10}}};
+        check("words: one word, case-blind", W::find(ws, "brown") == std::vector<core::layout::Rect>{{70, 10, 30, 10}});
+        check("words: a phrase on one line is one box", W::find(ws, "quick  brown") ==
+                                                         std::vector<core::layout::Rect>{{35, 10, 65, 10}});
+        check("words: a phrase over a line break is two boxes", W::find(ws, "brown fox").size() == 2);
+        check("words: part of a word finds it", W::find(ws, "ump").size() == 1 && W::find(ws, "cat").empty());
     }
 
     std::cout << "-----------------------------------------------\n";

@@ -105,7 +105,7 @@ void Shell::sync_view_bar() {  // helper: name, zoom, page, fit toggles
     if (m_act_thumbs) m_act_thumbs->get_state(thumbs_on);
     m_thumbs.set_visible(has && n > 1 && thumbs_on);
     if (has) m_thumbs.set_current(m_doc_view.page());
-    if (m_act_find) m_act_find->set_enabled(has && doc->kind() == core::Kind::Pdf);
+    if (m_act_find) m_act_find->set_enabled(has && doc->searchable());
     m_fit_width.set_active(has && m_doc_view.fit() == DocView::Fit::Width);
     m_fit_page.set_active(has && m_doc_view.fit() == DocView::Fit::Page);
     for (auto& a : {m_act_zoom_in, m_act_zoom_out, m_act_zoom_actual, m_act_fit_width, m_act_fit_page, m_act_book,
@@ -174,7 +174,7 @@ void Shell::sync_search_label() {  // helper: "3 of 17", "searching..."
     else if (doc && m_find_page < doc->count())
         t = std::to_string(m_hits.size()) + " so far…";
     else if (m_hits.empty())
-        t = doc && doc->kind() != core::Kind::Pdf ? "no text here" : "no matches";
+        t = doc && !doc->searchable() ? "no text here" : "no matches";
     else
         t = (m_hit >= 0 ? std::to_string(m_hit + 1) + " of " : "") + std::to_string(m_hits.size()) +
             (m_hit >= 0 ? "" : " matches");

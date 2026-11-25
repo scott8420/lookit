@@ -19,6 +19,10 @@
 // a new password, it comes back with every value, still a form, and drawn as
 // Lookit drew it before the save.
 //
+// s012: DjVu (made with djvulibre's tools when present), a CBZ (one page
+// deflated) and an EPUB open through Document::open with their pages in order,
+// the right sizes, pixels where they were drawn, and find on the word.
+//
 //   ./build/lookit_savecheck            prints one line per page, then OK / FAIL
 #include "Document.hpp"
 #include "Export.hpp"
@@ -26,6 +30,12 @@
 #include "Save.hpp"
 #include "core/Picture.hpp"
 #include "core/Forms.hpp"
+#include "core/Zip.hpp"
+#include "core/FileKind.hpp"
+
+#include <gio/gio.h>
+#include <cstdlib>
+#include <fstream>
 
 #include <cairo-pdf.h>
 #include <glib.h>
@@ -507,6 +517,212 @@ trailer << /Root 1 0 R /Size 21 >>
                  back && value(*back, "name") == "Ann" && value(*back, "size", large.box.x) == "1");
         }
         cairo_surface_destroy(before);
+    }
+
+    // ── s012: DjVu, CBZ comics, EPUB books ──────────────────────────────────
+    // Each kind is made here (DjVu with djvulibre's own tools, if present) and
+    // opened through Document::open: the pages are in order and the right
+    // size, the pixels are where they were drawn, and find lands on the word.
+    {
+        auto dark = [](cairo_surface_t* s, int x, int y) {
+            const auto* p = cairo_image_surface_get_data(s) + y * cairo_image_surface_get_stride(s) + x * 4;
+            return p[0] + p[1] + p[2] < 150;
+        };
+        auto color = [](cairo_surface_t* s, int x, int y) {
+            const auto* p = cairo_image_surface_get_data(s) + y * cairo_image_surface_get_stride(s) + x * 4;
+            return std::uint32_t(p[2]) << 16 | std::uint32_t(p[1]) << 8 | p[0];   // RGB
+        };
+        auto paint = [](const Document& d, int page, double scale) {
+            const auto sz = d.size(page);
+            auto* s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, int(std::ceil(sz.w * scale)), int(std::ceil(sz.h * scale)));
+            auto* cr = cairo_create(s);
+            cairo_set_source_rgb(cr, 1, 1, 1);
+            cairo_paint(cr);
+            d.render(cr, page, scale);
+            cairo_destroy(cr);
+            cairo_surface_flush(s);
+            return s;
+        };
+        auto line = [&](const std::string& what, bool ok) {
+            std::cout << "books: " << what << (ok ? "" : "  <- off") << "\n";
+            if (!ok) ++bad;
+        };
+        auto write = [](const fs::path& p, const std::string& s) {
+            std::ofstream f(p, std::ios::binary);
+            f << s;
+        };
+        auto png_bytes = [](int w, int h, double r, double g, double b) {
+            auto* s = cairo_image_surface_create(CAIRO_FORMAT_RGB24, w, h);
+            auto* cr = cairo_create(s);
+            cairo_set_source_rgb(cr, r, g, b);
+            cairo_paint(cr);
+            cairo_destroy(cr);
+            std::string out;
+            cairo_surface_write_to_png_stream(s, [](void* c, const unsigned char* d, unsigned n) {
+                static_cast<std::string*>(c)->append(reinterpret_cast<const char*>(d), n);
+                return CAIRO_STATUS_SUCCESS;
+            }, &out);
+            cairo_surface_destroy(s);
+            return out;
+        };
+
+        // DjVu: two 150 dpi pages (Letter, 1275 x 1650 px); page 1 has a black
+        // square at (150, 150)-(450, 450) px and a text layer: "Lighthouse
+        // keeper" on one line, its first word's box at (150, 1200)-(600, 1260)
+        // px from the bottom.
+        const bool tools = std::system("command -v c44 >/dev/null 2>&1 && command -v djvused >/dev/null 2>&1 && "
+                                       "command -v djvm >/dev/null 2>&1") == 0;
+        if (!tools) {
+            std::cout << "books: DjVu skipped -- djvulibre's tools (c44, djvused, djvm) aren't installed\n";
+        } else {
+            const fs::path d = dir / "djvu";
+            fs::create_directories(d);
+            for (int p = 1; p <= 2; ++p) {
+                std::string ppm = "P6\n1275 1650\n255\n";
+                for (int y = 0; y < 1650; ++y)
+                    for (int x = 0; x < 1275; ++x) {
+                        const bool ink = p == 1 && x >= 150 && x < 450 && y >= 150 && y < 450;
+                        ppm += ink ? std::string(3, '\0') : std::string(3, '\xff');
+                    }
+                write(d / ("p" + std::to_string(p) + ".ppm"), ppm);
+                std::system(("c44 -dpi 150 '" + (d / ("p" + std::to_string(p) + ".ppm")).string() + "' '" +
+                             (d / ("p" + std::to_string(p) + ".djvu")).string() + "' >/dev/null 2>&1").c_str());
+            }
+            write(d / "txt.dsed", "select 1\nset-txt\n(page 0 0 1275 1650 (line 150 1200 1100 1260 "
+                                  "(word 150 1200 600 1260 \"Lighthouse\") (word 650 1200 1100 1260 \"keeper\")))\n.\nsave\n");
+            std::system(("djvused '" + (d / "p1.djvu").string() + "' -f '" + (d / "txt.dsed").string() + "' >/dev/null 2>&1").c_str());
+            const std::string book = (d / "book.djvu").string();
+            std::system(("djvm -c '" + book + "' '" + (d / "p1.djvu").string() + "' '" + (d / "p2.djvu").string() +
+                         "' >/dev/null 2>&1").c_str());
+            std::string e;
+            auto doc = Document::open(book, e);
+            line("DjVu opens: 2 pages, Letter in points (1275 px at 150 dpi = 612 pt)",
+                 doc && doc->kind() == core::Kind::DjVu && doc->count() == 2 && std::abs(doc->size(0).w - 612) < 0.5 &&
+                     std::abs(doc->size(0).h - 792) < 0.5);
+            if (doc) {
+                auto* s = paint(*doc, 0, 1.0);   // 1 pt per pixel: the square is at 72..216 pt
+                line("DjVu draws the square where it is (and paper around it)",
+                     dark(s, 144, 144) && dark(s, 80, 80) && !dark(s, 60, 60) && !dark(s, 230, 144));
+                cairo_surface_destroy(s);
+                const auto hits = doc->find(0, "lighthouse");
+                // 150..600 px x, 1650-1260 = 390..450 px from the top -> 72..288 x, 187.2..216 y pt
+                const bool at = hits.size() == 1 && std::abs(hits[0].r.x - 72) < 1 && std::abs(hits[0].r.y - 187.2) < 1 &&
+                                std::abs(hits[0].r.w - 216) < 1;
+                line("DjVu find lands on the word", at);
+                line("DjVu find: a phrase, nothing on page 2", doc->find(0, "lighthouse keeper").size() == 1 &&
+                                                               doc->find(1, "lighthouse").empty());
+                line("DjVu text: the page's words", doc->text(0) == "Lighthouse keeper");
+            }
+        }
+
+        // CBZ: page10 (blue), page2 (green, deflated), page1 (red), a note.
+        {
+            const std::string red = png_bytes(300, 400, 1, 0, 0), green = png_bytes(320, 400, 0, 1, 0),
+                              blue = png_bytes(340, 400, 0, 0, 1);
+            std::string arc = core::zip::make_stored({{"c/page10.png", blue}, {"c/page2.png", green},
+                                                      {"c/page1.png", red}, {"c/readme.txt", "hi"}});
+            {   // deflate page2 in place: rebuild with GIO's zlib and patch the headers
+                GZlibCompressor* z = g_zlib_compressor_new(G_ZLIB_COMPRESSOR_FORMAT_RAW, 9);
+                std::string packed(green.size() + 1024, '\0');
+                gsize r = 0, w = 0;
+                g_converter_convert(G_CONVERTER(z), green.data(), green.size(), packed.data(), packed.size(),
+                                    G_CONVERTER_INPUT_AT_END, &r, &w, nullptr);
+                g_object_unref(z);
+                packed.resize(w);
+                // Same archive, page2 stored as method 8: write it entry by entry.
+                std::string err;
+                auto es = core::zip::list(arc, err);
+                std::vector<std::pair<std::string, std::string>> files;
+                for (const auto& en : es) files.push_back({en.name, *core::zip::raw(arc, en)});
+                files[1].second = packed;
+                arc = core::zip::make_stored(files);
+                // flip page2's method to deflate (local header +8, central +10) and its size
+                auto put = [&](std::size_t at, std::uint32_t v, int n) {
+                    for (int k = 0; k < n; ++k) arc[at + std::size_t(k)] = char((v >> (8 * k)) & 0xff);
+                };
+                es = core::zip::list(arc, err);
+                const auto& e2 = es[1];
+                put(e2.offset + 8, 8, 2);
+                put(e2.offset + 22, std::uint32_t(green.size()), 4);
+                std::size_t cd = arc.rfind(std::string("\x50\x4b\x01\x02", 4));
+                for (int back = 0; back < 3; ++back) cd = arc.rfind(std::string("\x50\x4b\x01\x02", 4), cd - 1);
+                cd = arc.find(std::string("\x50\x4b\x01\x02", 4), cd + 1);   // the second entry's record
+                put(cd + 10, 8, 2);
+                put(cd + 24, std::uint32_t(green.size()), 4);
+            }
+            const std::string cbz = (dir / "comic.cbz").string();
+            write(cbz, arc);
+            std::string e;
+            auto doc = Document::open(cbz, e);
+            line("CBZ opens: 3 pages (the note isn't one)", doc && doc->kind() == core::Kind::Cbz && doc->count() == 3);
+            if (doc && doc->count() == 3) {
+                line("CBZ: sizes from the headers, in name order",
+                     doc->size(0).w == 300 && doc->size(1).w == 320 && doc->size(2).w == 340 && doc->size(0).h == 400);
+                bool order = true;
+                const std::uint32_t want[3] = {0xff0000, 0x00ff00, 0x0000ff};
+                for (int p = 0; p < 3; ++p) {
+                    auto* s = paint(*doc, p, 0.5);
+                    order = order && color(s, 50, 50) == want[p];
+                    cairo_surface_destroy(s);
+                }
+                line("CBZ: red, green (deflated), blue -- page1, page2, page10", order);
+            } else if (!e.empty()) {
+                std::cout << "books: " << e << "\n";
+            }
+        }
+
+        // EPUB: a cover, a short chapter, a long one that runs over pages.
+        {
+            std::string longp;
+            for (int k = 0; k < 400; ++k) longp += "The sea was calm and the lamp turned slowly. ";
+            const std::string cover = png_bytes(600, 900, 0.1, 0.3, 0.8);
+            const std::string arc = core::zip::make_stored({
+                {"mimetype", "application/epub+zip"},
+                {"META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OEBPS/content.opf\" "
+                                           "media-type=\"application/oebps-package+xml\"/></rootfiles></container>"},
+                {"OEBPS/content.opf",
+                 "<package><metadata><dc:title>The Lighthouse</dc:title><meta name=\"cover\" content=\"cv\"/></metadata>"
+                 "<manifest><item id=\"a\" href=\"a.xhtml\" media-type=\"application/xhtml+xml\"/>"
+                 "<item id=\"b\" href=\"b.xhtml\" media-type=\"application/xhtml+xml\"/>"
+                 "<item id=\"cv\" href=\"img/cover.png\" media-type=\"image/png\"/></manifest>"
+                 "<spine><itemref idref=\"a\"/><itemref idref=\"b\"/></spine></package>"},
+                {"OEBPS/a.xhtml", "<html><body><h1>One</h1><p>It was a dark and stormy night.</p></body></html>"},
+                {"OEBPS/b.xhtml", "<html><body><h1>Two</h1><p>" + longp + "</p><p>The end.</p></body></html>"},
+                {"OEBPS/img/cover.png", cover}});
+            const std::string epub = (dir / "book.epub").string();
+            write(epub, arc);
+            std::string e;
+            auto doc = Document::open(epub, e);
+            line("EPUB opens: its title, cover + chapter one + chapter two over several pages",
+                 doc && doc->kind() == core::Kind::Epub && doc->title() == "The Lighthouse" && doc->count() >= 4);
+            if (doc && doc->count() >= 4) {
+                auto* s = paint(*doc, 0, 1.0);
+                line("EPUB: page 1 is the cover (fitted, its colour in the middle)", color(s, 216, 324) == 0x1a4dcc ||
+                                                                                     (color(s, 216, 324) & 0xff) > 0xc0);
+                cairo_surface_destroy(s);
+                line("EPUB: chapter one is its own page", doc->text(1).rfind("One", 0) == 0 &&
+                                                          doc->text(1).find("stormy") != std::string::npos &&
+                                                          doc->text(2).rfind("Two", 0) == 0);
+                const auto hits = doc->find(1, "STORMY");
+                line("EPUB: find (case-blind) lands inside the text block",
+                     hits.size() == 1 && hits[0].r.x > 54 && hits[0].r.x < 378 && hits[0].r.y > 54 && hits[0].r.w > 20);
+                bool fits = true;   // every page's text is drawn inside its margins
+                std::string all;
+                for (int p = 1; p < doc->count(); ++p) {
+                    all += doc->text(p);
+                    auto* ps = paint(*doc, p, 1.0);
+                    for (int y = 0; y < 648 && fits; y += 2)
+                        for (int x : {10, 30, 400, 420}) fits = fits && !dark(ps, x, y);
+                    for (int x = 0; x < 432 && fits; x += 2)
+                        for (int y : {10, 30, 620, 640}) fits = fits && !dark(ps, x, y);
+                    cairo_surface_destroy(ps);
+                }
+                line("EPUB: the pages hold the whole text, nothing in the margins",
+                     fits && all.find("The end.") != std::string::npos);
+            } else if (!e.empty()) {
+                std::cout << "books: " << e << "\n";
+            }
+        }
     }
 
     std::cout << (bad ? "FAIL" : "OK") << "\n";

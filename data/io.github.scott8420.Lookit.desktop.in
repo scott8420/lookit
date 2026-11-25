@@ -11,7 +11,7 @@ StartupNotify=true
 StartupWMClass=io.github.scott8420.Lookit
 DBusActivatable=true
 Keywords=pdf;image;picture;viewer;preview;photo;document;
-MimeType=application/pdf;image/png;image/jpeg;image/gif;image/webp;image/tiff;image/bmp;image/svg+xml;image/heic;image/avif;
+MimeType=application/pdf;image/vnd.djvu;image/vnd.djvu+multipage;application/vnd.comicbook+zip;application/x-cbz;application/epub+zip;image/png;image/jpeg;image/gif;image/webp;image/tiff;image/bmp;image/svg+xml;image/heic;image/avif;
 Actions=send-clipboard;
 
 [Desktop Action send-clipboard]

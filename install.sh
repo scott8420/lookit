@@ -50,6 +50,8 @@ Lookit is installed. How to use it:
                             Ctrl+S saves the values into the PDF
   A locked PDF              Lookit asks for its password; Pages menu ->
                             Password... adds, changes or removes one
+  DjVu, CBZ, EPUB           open like PDFs (read-only): pages, thumbnails,
+                            Book view (Ctrl+B), find (Ctrl+F) where there's text
   Ctrl+Shift+A              markup: highlight, note, box, ellipse, line,
                             arrow, text
   A picture                 Left / Right walk its folder; the picture bar
