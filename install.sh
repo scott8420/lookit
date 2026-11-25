@@ -8,13 +8,16 @@
 #   ~/.local/bin/lookit         a link to it, for the command line
 #   ~/.local/share/...         desktop entry, D-Bus service, icons (install-desktop.sh)
 #   ~/.local/share/gnome-shell/extensions/lookit-tile@...   the tile (install-extension.sh)
+#   ~/.config/mimeapps.list    only with --default: Lookit opens PDFs, pictures,
+#                              DjVu, comics and books (install-defaults.sh);
+#                              what you had is recorded and put back on uninstall
 #
 # Builds first (./build.sh is incremental). Re-run after pulling changes.
 # Safe while Lookit runs: the binary is replaced, not overwritten; quit and
 # reopen Lookit to use the new one. A new tile needs a log out / in.
 #
-# ./install.sh --uninstall  takes all of it out. Recents stay
-# (~/.local/share/lookit).
+# ./install.sh --uninstall  takes all of it out and gives your previous default
+# apps back. Recents stay (~/.local/share/lookit).
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -24,11 +27,15 @@ BIN="$HOME/.local/bin"
 
 usage() {
     cat <<'HELP'
-Usage: ./install.sh [--uninstall | --help]
+Usage: ./install.sh [--default | --uninstall | --help]
 
   ./install.sh              build, then install Lookit for this user (~/.local)
+  ./install.sh --default    the same, then make Lookit the default app for
+                            PDF, DjVu, CBZ, EPUB and pictures (what you had is
+                            written down; ./install-defaults.sh --help)
   ./install.sh --uninstall  take it all out again (app, desktop entry, quick
-                            look, tile); your recents and signature stay in
+                            look, tile) and put your previous defaults back;
+                            your recents and signature stay in
                             ~/.local/share/lookit
   ./install.sh --help       this text
 HELP
@@ -60,6 +67,10 @@ Lookit is installed. How to use it:
                             TIFF / BMP / PDF
   lookit --help             command-line options
 
+Default app:  $(pwd)/install-defaults.sh            (Lookit opens PDFs, pictures, books)
+              $(pwd)/install-defaults.sh --restore  (your previous apps back)
+              $(pwd)/install-defaults.sh --status   (who opens what)
+
 Uninstall:  $(pwd)/install.sh --uninstall
 ----------------------------------------------------------------------
 HELP
@@ -67,11 +78,13 @@ HELP
 
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
-    ""|--uninstall) ;;
+    ""|--uninstall|--default) ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
 esac
 
 if [ "${1:-}" = "--uninstall" ]; then
+    # Defaults first, while Lookit's entry still exists: your old apps come back.
+    ./install-defaults.sh --restore
     ./install-extension.sh --uninstall
     ./install-desktop.sh --uninstall
     rm -f "$BIN/lookit"
@@ -102,4 +115,8 @@ APP_EXEC="$LIB/lookit" LOOKIT_QUIET_HELP=1 ./install-desktop.sh
 echo ""
 LOOKIT_QUIET_HELP=1 ./install-extension.sh
 echo ""
+if [ "${1:-}" = "--default" ]; then
+    ./install-defaults.sh
+    echo ""
+fi
 how_to_use

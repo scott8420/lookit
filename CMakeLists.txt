@@ -16,14 +16,31 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
-# PDFs: poppler-glib (Fedora: poppler-glib-devel; Ubuntu: libpoppler-glib-dev).
-pkg_check_modules(POPPLER REQUIRED poppler-glib)
-# Saving edited PDFs: qpdf (Fedora: qpdf-devel; Ubuntu: libqpdf-dev).
-pkg_check_modules(QPDF REQUIRED libqpdf)
-# DjVu (s012): djvulibre (Fedora: djvulibre-devel; Ubuntu: libdjvulibre-dev).
-pkg_check_modules(DJVU REQUIRED ddjvuapi)
-find_package(spdlog REQUIRED)
+# s013: (a macro, not a function, so the <PREFIX>_* variables reach this scope.)
+# Each library is looked up WITHOUT REQUIRED, then a missing one stops
+# the build with the exact install command (Fedora first, Ubuntu after) instead
+# of pkg-config's bare "Package 'x' not found".
+macro(lookit_need prefix module fedora ubuntu what)
+    pkg_check_modules(${prefix} ${module})
+    if(NOT ${prefix}_FOUND)
+        message(FATAL_ERROR
+            "\nLookit needs ${what} (pkg-config module '${module}') and it is not installed.\n"
+            "  Fedora:  sudo dnf install ${fedora}\n"
+            "  Ubuntu:  sudo apt install ${ubuntu}\n"
+            "Then run ./build.sh (or ./install.sh) again.\n")
+    endif()
+endmacro()
+lookit_need(GTKMM   gtkmm-4.0   gtkmm4.0-devel      libgtkmm-4.0-dev     "gtkmm 4 (the GUI toolkit)")
+lookit_need(POPPLER poppler-glib poppler-glib-devel libpoppler-glib-dev  "poppler-glib (PDFs)")
+lookit_need(QPDF    libqpdf     qpdf-devel          libqpdf-dev          "qpdf (saving edited PDFs)")
+lookit_need(DJVU    ddjvuapi    djvulibre-devel     libdjvulibre-dev     "djvulibre (DjVu books)")
+find_package(spdlog QUIET)
+if(NOT spdlog_FOUND)
+    message(FATAL_ERROR "\nLookit needs spdlog (logging) and it is not installed.\n"
+        "  Fedora:  sudo dnf install spdlog-devel\n"
+        "  Ubuntu:  sudo apt install libspdlog-dev\n"
+        "Then run ./build.sh (or ./install.sh) again.\n")
+endif()
 
 # ── lookit_core -- the GTK-free core (the model side of the one real seam) ──────
 # No gtkmm on this library's link line, BY DESIGN: a stray UI include under

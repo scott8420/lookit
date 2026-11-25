@@ -111,11 +111,34 @@ gives Space back to Sushi.
 
 ```
 ./install.sh              # app, desktop entry, D-Bus service, quick-settings tile
-./install.sh --uninstall  # take it all out (keeps recents + your signature)
+./install.sh --default    # the same, and make Lookit the default app
+./install.sh --uninstall  # take it all out, old default apps back
+                          #   (keeps recents + your signature)
 ./install.sh --help       # what each option does
 ```
 
-Every installer (`install.sh`, `install-desktop.sh`, `install-extension.sh`)
+If the build stops with "Lookit needs ...", it names the package to install
+(Fedora `sudo dnf install ...`, Ubuntu `sudo apt install ...`).
+
+## Default app
+
+```
+./install-defaults.sh               # Lookit opens PDF, DjVu, CBZ, EPUB, pictures
+./install-defaults.sh --hide-others # ...and hide Papers / Evince / Loupe /
+                                    #   Image Viewer from the app grid
+./install-defaults.sh --status      # which app opens each type now
+./install-defaults.sh --restore     # your previous apps back, hidden ones shown
+```
+
+Per user (`~/.config/mimeapps.list`), no root. What you had is written down
+first (`~/.local/share/lookit/previous-defaults`) and `--restore` puts exactly
+that back -- except a type you've pointed at another app since, which stays
+yours. Nothing is uninstalled; removing Papers or Loupe is up to you
+(`sudo dnf remove papers loupe` -- the script only prints it).
+`tools/test_defaults.sh` runs the whole round trip in a throwaway home.
+
+Every installer (`install.sh`, `install-desktop.sh`, `install-extension.sh`,
+`install-defaults.sh`)
 takes `--help` and ends by printing how to use what it installed and the
 command that removes it.
 
