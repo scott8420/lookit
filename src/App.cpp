@@ -65,19 +65,37 @@ int App::on_local_options(const Glib::RefPtr<Glib::VariantDict>& o) {
     bool clip = false;
     const bool has_text = o->lookup_value("send", text);
     o->lookup_value("send-clipboard", clip);
+    // s014.2: register here for every launch, so a Lookit that is running but
+    // not answering (it holds the app's D-Bus name; GApplication's own register
+    // gives up after D-Bus's 25 s with "Failed to register: Timeout was
+    // reached" and quits) can't stop this one opening: say so, and run on our
+    // own instead, unshared.
+    if (!register_or_go_alone()) return 1;
     if (!has_text && !clip) return -1;
-    try {
-        register_application();
-    } catch (const Glib::Error& e) {
-        if (auto lg = log::get(log::Area::App)) lg->error("register failed: {}", e.what());
-        return 1;
-    }
     if (auto lg = log::get(log::Area::App))
         lg->info("{} {}", has_text ? "--send" : "--send-clipboard",
                  is_remote() ? "-> the running Lookit" : "(this Lookit)");
     if (has_text) activate_action("receive-text", Glib::Variant<Glib::ustring>::create(text));
     else          activate_action("receive-clipboard");
     return -1;
+}
+
+bool App::register_or_go_alone() {
+    try {
+        if (register_application()) return true;
+    } catch (const Glib::Error& e) {
+        if (auto lg = log::get(log::Area::App)) lg->warn("register failed: {}", e.what());
+        g_printerr("Lookit: another Lookit is running but not answering (%s).\n"
+                   "Opening this one on its own. To close the stuck one: pkill -x lookit\n",
+                   e.what());
+    }
+    set_flags(get_flags() | Gio::Application::Flags::NON_UNIQUE);
+    try {
+        if (register_application()) return true;
+    } catch (const Glib::Error& e) {
+        if (auto lg = log::get(log::Area::App)) lg->error("register failed again: {}", e.what());
+    }
+    return false;
 }
 
 // The SHORTCUT-REGISTRY paradigm's other consumer. Accelerators are an

@@ -344,6 +344,29 @@ int main() {
         auto loaded = core::load_recents(file);
         check("recents: load prunes the missing path",
               loaded.size() == 1 && loaded.front() == live);
+        {
+            const std::string longname =
+                "/pics/Adolf_Hir\xC3\xA9my-Hirschl_-_Die_Seelen_am_Acheron_-_942_-_\xC3\x96sterreichische_Galerie_Belvedere.jpg";
+            const std::string lab = core::recent_menu_label(longname);
+            std::string plain;   // undo the mnemonic escape, count code points
+            for (std::size_t i = 0; i < lab.size(); ++i) {
+                plain += lab[i];
+                if (lab[i] == '_' && i + 1 < lab.size() && lab[i + 1] == '_') ++i;
+            }
+            std::size_t cps = 0;
+            for (unsigned char b : plain) if ((b & 0xC0) != 0x80) ++cps;
+            check("recents: menu label cut to 36 characters", cps == core::kRecentLabelMax,
+                  std::to_string(cps) + " " + lab);
+            check("recents: menu label keeps the extension", plain.size() > 4 && plain.substr(plain.size() - 4) == ".jpg", lab);
+            check("recents: menu label has the ellipsis", lab.find("\xE2\x80\xA6") != std::string::npos, lab);
+            check("recents: menu label doubles every underscore",
+                  core::recent_menu_label("/a/x_y.pdf") == "x__y.pdf", core::recent_menu_label("/a/x_y.pdf"));
+            check("recents: short name unchanged", core::recent_menu_label("/a/b/report.pdf") == "report.pdf");
+            check("recents: never splits a UTF-8 character",
+                  core::recent_menu_label("/\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96.pdf", 8)
+                      == "\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xE2\x80\xA6" "df",
+                  core::recent_menu_label("/\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96\xC3\x96.pdf", 8));
+        }
         check("recents: missing file -> empty",
               core::load_recents(base + "/nope.json").empty());
     }

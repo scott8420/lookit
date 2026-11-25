@@ -155,10 +155,9 @@ void apply_fields(Poppler& p, int src, const std::map<std::string, std::string>&
     for (auto* f : held) g_object_unref(f);
 }
 
-std::shared_ptr<Poppler> load_poppler(const std::string& path, std::string& error) {
-    auto& pool = poppler_pool();
-    if (auto it = pool.find(path); it != pool.end())
-        if (auto live = it->second.lock()) return live;
+// A poppler of its own for `path` (not shared through the pool) -- what
+// load_poppler shares, and what a twin (s014.2) reads on another thread.
+std::shared_ptr<Poppler> open_poppler(const std::string& path, std::string& error) {
     GError* err = nullptr;
     std::string uri;
     try { uri = Glib::filename_to_uri(path); }
@@ -181,7 +180,15 @@ std::shared_ptr<Poppler> load_poppler(const std::string& path, std::string& erro
     each_field(*p, [&](int, PopplerFormFieldMapping* m) {
         p->original[poppler_form_field_get_id(m->field)] = field_value(m->field);
     });
-    pool[path] = p;
+    return p;
+}
+
+std::shared_ptr<Poppler> load_poppler(const std::string& path, std::string& error) {
+    auto& pool = poppler_pool();
+    if (auto it = pool.find(path); it != pool.end())
+        if (auto live = it->second.lock()) return live;
+    auto p = open_poppler(path, error);
+    if (p) pool[path] = p;
     return p;
 }
 
@@ -303,6 +310,31 @@ public:
         if (with_marks)
             for (const auto& m : pg.marks) mark_art::draw(cr, m);
         cairo_restore(cr);
+    }
+
+    // s014.2: the same pages on popplers of their own, with the form values
+    // shown now -- poppler is not safe to use from two threads at once, so the
+    // thumbnail thread draws from this. Built on the main thread.
+    std::unique_ptr<Document> twin() const override {
+        std::map<const Poppler*, std::shared_ptr<Poppler>> fresh;
+        std::vector<Page> pages = m_pages;
+        for (auto& pg : pages) {
+            if (!pg.src) continue;
+            auto [it, added] = fresh.try_emplace(pg.src.get());
+            if (added) {
+                std::string e;
+                it->second = open_poppler(pg.src->path, e);
+                if (it->second) {
+                    std::map<std::string, std::string> now;   // field id -> value shown now
+                    each_field(*pg.src, [&](int, PopplerFormFieldMapping* m) {
+                        now[core::forms::key(0, poppler_form_field_get_id(m->field))] = field_value(m->field);
+                    });
+                    apply_fields(*it->second, 0, now);
+                }
+            }
+            pg.src = it->second;
+        }
+        return std::make_unique<PdfDocument>(std::move(pages), m_path, m_title);
     }
 
 private:

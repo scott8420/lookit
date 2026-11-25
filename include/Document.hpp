@@ -73,6 +73,10 @@ public:
                                                        core::marks::Point /*b*/) const { return {}; }
     // The page's text, in reading order as the file gives it ("" for pictures).
     virtual std::string text(int /*page*/) const { return {}; }
+    // A copy that draws the same pages and shares nothing with this one, so it
+    // can render on another thread while this one serves the view (s014.2:
+    // thumbnails). Null: this kind can't -- draw it on the main thread.
+    virtual std::unique_ptr<Document> twin() const { return nullptr; }
     virtual bool opaque() const { return true; }
     // A picture's pixels (ARGB32), as decoded; null for paper.
     virtual cairo_surface_t* surface() const { return nullptr; }   // paper: draw white under it

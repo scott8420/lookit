@@ -28,6 +28,15 @@ void recents_add(std::vector<std::string>& list, const std::string& path,
                  std::size_t max = kMaxRecents);
 void recents_remove(std::vector<std::string>& list, const std::string& path);
 
+// The Open Recent submenu's label for a path: the file name, cut in the middle
+// to at most `max` characters (UTF-8 aware, the extension kept), with every
+// '_' doubled so GMenu doesn't read it as a mnemonic. A GtkPopoverMenu sizes
+// ALL its pages to the widest one, so one long file name in the submenu used
+// to stretch the whole main menu (s014.1).
+inline constexpr std::size_t kRecentLabelMax = 36;
+std::string recent_menu_label(const std::string& path,
+                              std::size_t max = kRecentLabelMax);
+
 // Persistence pump -- encode + decode adjacent so they can't drift.
 std::vector<std::string> load_recents(const std::string& file);
 bool                     save_recents(const std::string& file,

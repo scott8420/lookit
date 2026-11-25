@@ -34,6 +34,7 @@ private:
     // and `lookit --send TEXT` / `--send-clipboard`. All roads end at the same
     // two app actions, so the tile and the command line can't disagree.
     int  on_local_options(const Glib::RefPtr<Glib::VariantDict>& options);
+    bool register_or_go_alone();   // s014.2: a stuck Lookit can't stop this one
     Shell& ensure_shell();        // one window, ever: built on first need, then reused
 
     Shell* m_shell = nullptr;   // owned by the application via add_window

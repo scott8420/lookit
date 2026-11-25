@@ -16,6 +16,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)   # s014.2: the thumbnail thread
 # s013: (a macro, not a function, so the <PREFIX>_* variables reach this scope.)
 # Each library is looked up WITHOUT REQUIRED, then a missing one stops
 # the build with the exact install command (Fedora first, Ubuntu after) instead
@@ -155,7 +156,7 @@ add_executable(lookit
     src/Log.cpp
 )
 target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${DJVU_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
-target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog Threads::Threads)
 target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${DJVU_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
 target_compile_options(lookit    PRIVATE ${GTKMM_CFLAGS_OTHER})
 
@@ -172,7 +173,7 @@ add_executable(lookit-peek
     src/Log.cpp
 )
 target_include_directories(lookit-peek PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${DJVU_INCLUDE_DIRS})
-target_link_libraries(lookit-peek     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_libraries(lookit-peek     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} lookit_core spdlog::spdlog Threads::Threads)
 target_link_directories(lookit-peek   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${DJVU_LIBRARY_DIRS})
 target_compile_options(lookit-peek    PRIVATE ${GTKMM_CFLAGS_OTHER})
 
@@ -191,6 +192,6 @@ add_executable(lookit_savecheck
     src/Log.cpp
 )
 target_include_directories(lookit_savecheck PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${DJVU_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
-target_link_libraries(lookit_savecheck     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_libraries(lookit_savecheck     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${DJVU_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog Threads::Threads)
 target_link_directories(lookit_savecheck   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${DJVU_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
 target_compile_options(lookit_savecheck    PRIVATE ${GTKMM_CFLAGS_OTHER})

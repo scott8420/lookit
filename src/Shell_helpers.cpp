@@ -45,7 +45,7 @@ void Shell::rebuild_recents() {  // helper: the cards + the submenu
     m_recents_menu->remove_all();
     for (const auto& p : m_recents) {
         const fs::path fp(p);
-        auto item = Gio::MenuItem::create(fp.filename().string(), "");
+        auto item = Gio::MenuItem::create(core::recent_menu_label(p), "");
         item->set_action_and_target("recents.open", Glib::Variant<Glib::ustring>::create(p));
         m_recents_menu->append_item(item);
 

@@ -72,4 +72,31 @@ bool save_recents(const std::string& file, const std::vector<std::string>& list)
     return static_cast<bool>(f);
 }
 
+std::string recent_menu_label(const std::string& path, std::size_t max) {
+    std::string name = fs::path(path).filename().string();
+    if (name.empty()) name = path;
+    // Split into UTF-8 code points (a stray byte counts as one).
+    std::vector<std::string> cps;
+    for (std::size_t i = 0; i < name.size();) {
+        const unsigned char b = static_cast<unsigned char>(name[i]);
+        std::size_t n = b < 0x80 ? 1 : (b >> 5) == 0x6 ? 2 : (b >> 4) == 0xE ? 3 : (b >> 3) == 0x1E ? 4 : 1;
+        if (i + n > name.size()) n = 1;
+        cps.push_back(name.substr(i, n));
+        i += n;
+    }
+    if (max < 5) max = 5;
+    if (cps.size() > max) {
+        const std::size_t keep = max - 1;               // one for the ellipsis
+        const std::size_t tail = keep * 2 / 5;          // the end (and extension)
+        const std::size_t head = keep - tail;
+        std::vector<std::string> cut(cps.begin(), cps.begin() + head);
+        cut.push_back("\xE2\x80\xA6");                  // U+2026
+        cut.insert(cut.end(), cps.end() - tail, cps.end());
+        cps.swap(cut);
+    }
+    std::string out;
+    for (const auto& cp : cps) out += (cp == "_") ? "__" : cp;
+    return out;
+}
+
 }  // namespace lookit::core
