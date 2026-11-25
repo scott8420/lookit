@@ -27,6 +27,7 @@
 #include "Document.hpp"
 #include "Log.hpp"
 #include "core/FileKind.hpp"
+#include "core/Tint.hpp"
 
 #include <gdk/gdk.h>
 #ifdef GDK_WINDOWING_WAYLAND
@@ -36,6 +37,7 @@
 #include <glibmm.h>
 #include <gtkmm.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -318,7 +320,13 @@ protected:
         if (auto settings = Gtk::Settings::get_default())
             settings->property_gtk_application_prefer_dark_theme() = true;
         auto css = Gtk::CssProvider::create();
-        css->load_from_data(std::string(lookit::LOOKIT_CSS) + R"CSS(
+        // s014: quick look wears the same base colour as the app.
+        const char* env = std::getenv("LOOKIT_TINT");
+        std::string tint = env ? lookit::core::normalise_hex(env) : std::string();
+        if (tint.empty())
+            tint = lookit::core::load_tint((std::filesystem::path(Glib::get_user_config_dir()) /
+                                            "lookit" / "settings.json").string());
+        css->load_from_data(lookit::core::tint_css(std::string(lookit::LOOKIT_CSS) + R"CSS(
             window.peek headerbar { min-height: 36px; }
             window.lookit headerbar button.peek-open {
                 padding: 4px 14px; border-radius: 999px; font-weight: 800;
@@ -327,7 +335,7 @@ protected:
             .peek-text, .peek-text text { background-color: rgba(0,0,0,0.25); color: #eef8fa; }
             .peek-card { padding: 28px 36px; }
             .peek-name { font-size: 1.4em; }
-        )CSS");
+        )CSS", tint));
         Gtk::StyleContext::add_provider_for_display(Gdk::Display::get_default(), css,
                                                     GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     }

@@ -6,6 +6,12 @@
 #include "Appearance.hpp"
 #include "Log.hpp"
 #include "Css.hpp"
+#include "core/Tint.hpp"
+
+#include <glibmm/miscutils.h>
+
+#include <cstdlib>
+#include <filesystem>
 
 #include <gtkmm/cssprovider.h>
 #include <gtkmm/settings.h>
@@ -129,11 +135,16 @@ Shell& App::ensure_shell() {
 
     // The app stylesheet (Css.hpp): the drawer tabs' hover-reveal, the panels.
     // APPLICATION priority so our named classes beat the theme's defaults.
+    // s014: the stylesheet goes through core::tint_css with the remembered
+    // base colour (LOOKIT_TINT=#rrggbb overrides it for one run, unsaved).
+    // Teal, the default, is the design itself -- tint_css hands it back as is.
     if (auto display = Gdk::Display::get_default()) {
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data(LOOKIT_CSS);
+        m_css = Gtk::CssProvider::create();
+        const char* env = std::getenv("LOOKIT_TINT");
+        const std::string pick = env ? core::normalise_hex(env) : std::string();
+        set_tint(pick.empty() ? core::load_tint(settings_file()) : pick, false);
         Gtk::StyleContext::add_provider_for_display(
-            display, css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+            display, m_css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     }
 
     // Register the compiled-in bundle and point the icon theme at its icon
@@ -149,8 +160,25 @@ Shell& App::ensure_shell() {
     m_shell = new Shell();       // lifetime owned by the application
     add_window(*m_shell);
     m_shell->build_ui();
+    m_shell->show_tint(m_tint);
     if (auto lg = log::get(log::Area::App)) lg->info("Lookit window built");
     return *m_shell;
+}
+
+std::string App::settings_file() {
+    return (std::filesystem::path(Glib::get_user_config_dir()) / "lookit" / "settings.json").string();
+}
+
+// Re-load the one provider: GTK restyles every widget in place, no rebuild.
+void App::set_tint(const std::string& hex, bool remember) {
+    const std::string h = core::normalise_hex(hex);
+    if (h.empty() || !m_css) return;
+    m_tint = h;
+    m_css->load_from_data(core::tint_css(LOOKIT_CSS, h));
+    if (remember) core::save_tint(settings_file(), h);
+    if (m_shell) m_shell->show_tint(h);
+    if (auto lg = log::get(log::Area::App))
+        lg->info("tint {} ({}){}", h, core::tint_label(h), remember ? ", saved" : "");
 }
 
 }  // namespace lookit

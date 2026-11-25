@@ -64,6 +64,7 @@ class AboutWindow;
 class ShortcutsDialog;
 class SignatureDialog;
 class PasswordDialog;
+class ColourDialog;
 
 class Shell : public Gtk::ApplicationWindow {
 public:
@@ -76,12 +77,14 @@ public:
     void open_path(const std::string& path);     // category: handler: open, show, remember
     void receive_text(const std::string& raw);   // category: handler: the tile / --send TEXT
     void receive_clipboard();                    // category: handler: --send-clipboard
+    void show_tint(const std::string& hex);      // category: colour: the base colour changed (App::set_tint)
 
 private:
     // ── zones ──────────────────────────────────────────────────────────────
     void build_shell();                          // category: zone: window, header, sidebar, overlay
     void build_sidebar();                        // category: zone: brand + nav rows
     void build_home();                           // category: zone: the hero + recent cards
+    Gtk::Image* m_hero_logo = nullptr;           // s014: re-tinted by show_tint when the logo follows
     void build_view();                           // category: zone: the toolbar + DocView
     void build_drawers();                        // category: zone: overlay + two edge drawers, tabs, scrim
     Glib::RefPtr<Gio::Menu> build_menu();        // category: zone: hamburger model
@@ -353,6 +356,8 @@ private:
 
     std::unique_ptr<AboutWindow>     m_about;
     std::unique_ptr<ShortcutsDialog> m_shortcuts;
+    std::unique_ptr<ColourDialog>    m_colour;     // s014: Menu -> Colour…
+    void on_colour();                            // category: colour: open the Colour dialog
 };
 
 }  // namespace lookit

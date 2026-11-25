@@ -2,6 +2,7 @@
 #include "PasswordDialog.hpp"
 #include "AboutWindow.hpp"      // complete type for ~unique_ptr<AboutWindow>
 #include "ShortcutsDialog.hpp"
+#include "ColourDialog.hpp"     // complete type for ~unique_ptr<ColourDialog>
 #include "SignatureDialog.hpp"   // complete type for ~unique_ptr<SignatureDialog>
 #include "Log.hpp"
 #include "core/Recents.hpp"

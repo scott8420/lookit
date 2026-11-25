@@ -79,6 +79,8 @@ add_library(lookit_core STATIC
     # chapter text, DjVu word search.
     src/core/Zip.cpp
     src/core/Book.cpp
+    # s014: the skin's base colour -- every literal turned in OKLCH, lightness kept.
+    src/core/Tint.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
@@ -119,6 +121,8 @@ add_custom_command(
 # include/Shell.hpp); all parts compile into the one lookit::Shell.
 add_executable(lookit
     ${LOOKIT_RESOURCES_C}
+    src/Shell_colour.cpp
+    src/ColourDialog.cpp
     src/main.cpp
     src/App.cpp
     # Follows the desktop's light/dark preference (GTK4 will not do it for us

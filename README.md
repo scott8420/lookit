@@ -99,6 +99,16 @@ TIFF at 72-600 dpi (all, or "1-3, 7"), or the PDF's text as .txt; a picture as
 PNG, JPEG, TIFF, BMP or PDF. Many pages go into a folder, one file each
 (`name-p01.png`). Exports are what's on screen, unsaved changes included.
 
+## Colour
+
+Menu -> **Colour…** sets the window's base colour: Lookit teal (the default),
+Blue, Violet, Rose, Ember, Green, Graphite, or **Custom…** (GNOME's colour
+picker). It applies at once, the logo on Home follows it, quick look wears it
+too, and it is remembered in `~/.config/lookit/settings.json`. Every colour
+keeps the lightness it has in teal, so text is as readable in any colour you
+pick. **Reset to Teal** goes back. For one run without saving:
+`LOOKIT_TINT=#7950f2 lookit`.
+
 ## Quick look in Files
 
 `./install.sh` also installs `lookit-peek` and makes it Files' spacebar

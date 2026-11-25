@@ -29,6 +29,9 @@
 #include "core/Book.hpp"
 #include "core/Zip.hpp"
 #include "core/Forms.hpp"
+#include "core/Tint.hpp"
+#include "Css.hpp"   // plain text, no GTK: the skin the tint turns
+#include <regex>
 #include <set>
 #include <cstdint>
 #include <cmath>
@@ -1233,6 +1236,120 @@ int main() {
                                                          std::vector<core::layout::Rect>{{35, 10, 65, 10}});
         check("words: a phrase over a line break is two boxes", W::find(ws, "brown fox").size() == 2);
         check("words: part of a word finds it", W::find(ws, "ump").size() == 1 && W::find(ws, "cat").empty());
+    }
+
+
+    // ── s014: the skin's base colour (core/Tint) ────────────────────────────
+    {
+        using core::parse_hex; using core::normalise_hex; using core::tint_css;
+        const std::string css = lookit::LOOKIT_CSS;
+        check("tint: hex -- #rrggbb, rrggbb, #rgb, case", normalise_hex("#15AABF") == "#15aabf" &&
+              normalise_hex("15aabf") == "#15aabf" && normalise_hex("#fa0") == "#ffaa00" &&
+              normalise_hex(" #000000 ") == "#000000");
+        check("tint: not a colour -> nothing", normalise_hex("") == "" && normalise_hex("#12345") == "" &&
+              normalise_hex("#gg0000") == "" && normalise_hex("teal") == "");
+        check("tint: teal IS the design -- the sheet comes back byte for byte",
+              tint_css(css, core::kDefaultTint) == css && tint_css(css, "#15AABF") == css);
+        check("tint: a non-colour leaves the sheet alone", tint_css(css, "rainbow") == css);
+        check("tint: presets -- teal first and the default, ids unique, all colours",
+              core::tint_presets().front().hex == core::kDefaultTint && [] {
+                  std::set<std::string> ids;
+                  for (const auto& p : core::tint_presets())
+                      if (!ids.insert(p.id).second || normalise_hex(p.hex) != p.hex) return false;
+                  return true; }());
+        check("tint: labels -- a preset's name, else Custom",
+              core::tint_label("#e64980") == "Rose" && core::tint_label("#15aabf") == "Teal" &&
+              core::tint_label("#123456") == "Custom");
+
+        // WCAG contrast of the skin's text on its backgrounds, before and after.
+        auto lum = [](const core::Rgb& c) {
+            auto f = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+            return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+        };
+        auto contrast = [&](const core::Rgb& a, const core::Rgb& b) {
+            const double x = lum(a), y = lum(b);
+            return (std::max(x, y) + 0.05) / (std::min(x, y) + 0.05);
+        };
+        auto T = [](const char* lit, const std::string& base) {
+            return core::tint_color(*parse_hex(lit), *parse_hex(base));
+        };
+        // Presets, plus the hard customs: pure yellow, pure red, pure blue,
+        // black, white, a mid grey, a near-teal.
+        std::vector<std::string> bases;
+        for (const auto& p : core::tint_presets()) bases.push_back(p.hex);
+        for (const char* h : {"#ffff00", "#ff0000", "#0000ff", "#000000", "#ffffff", "#808080", "#16abbe"})
+            bases.push_back(h);
+        bool readable = true, button = true, kept_l = true;
+        std::string worst;
+        for (const auto& b : bases) {
+            const double body   = contrast(T("#eef8fa", b), T("#0f2229", b));   // text on the window
+            const double drawer = contrast(T("#eef8fa", b), T("#12313a", b));   // text on a drawer
+            const double hero   = contrast(T("#053039", b), T("#99e9f2", b));   // Open… on its pill
+            if (body < 12 || drawer < 10) { readable = false; worst += b + " "; }
+            if (hero < 7) { button = false; worst += b + "(btn) "; }
+            for (const char* lit : {"#0c4a57", "#0b6274", "#99e9f2", "#12313a", "#0f2229"}) {
+                const double l0 = lum(*parse_hex(lit)), l1 = lum(T(lit, b));
+                if (std::abs(l1 - l0) > 0.02 + 0.08 * l0) { kept_l = false; worst += b + ":" + lit + " "; }
+            }
+        }
+        check("tint: every base keeps text on the window and drawers readable (>= 12:1 / 10:1)", readable, worst);
+        check("tint: every base keeps Open… readable on its pill (>= 7:1)", button, worst);
+        check("tint: lightness kept -- each colour's luminance stays put", kept_l, worst);
+
+        const std::string blue = tint_css(css, "#228be6");
+        check("tint: a tint changes the sheet", blue != css && blue.size() > css.size() / 2);
+        check("tint: the error red is kept", blue.find("#ff8787") != std::string::npos &&
+              blue.find("#ffe3e3") != std::string::npos);
+        check("tint: greys and white pass through",
+              blue.find("rgba(255,255,255,0.10)") != std::string::npos &&
+              blue.find("rgba(0,0,0,0.22)") != std::string::npos && blue.find("#ffffff") != std::string::npos);
+        check("tint: no teal accent left behind", blue.find("#99e9f2") == std::string::npos &&
+              blue.find("153,233,242") == std::string::npos);
+        {
+            const auto acc = T("#99e9f2", "#228be6");
+            check("tint: toward blue, the accent turns bluer", acc.b > acc.g && acc.b > acc.r);
+            const auto rose = T("#99e9f2", "#e64980");
+            check("tint: toward rose, the accent turns pink", rose.r > rose.g && rose.r > rose.b);
+            const auto grey = T("#99e9f2", "#000000");
+            check("tint: black (no hue) gives a grey skin",
+                  std::abs(grey.r - grey.g) < 0.02 && std::abs(grey.g - grey.b) < 0.02);
+        }
+        {   // Every literal the turn writes is a real colour, for every base.
+            static const std::regex rgba(R"(rgba\(([^)]*)\))");
+            bool ok = true;
+            for (const auto& b : bases) {
+                const std::string t = tint_css(css, b);
+                for (auto it = std::sregex_iterator(t.begin(), t.end(), rgba);
+                     it != std::sregex_iterator(); ++it) {
+                    int r, g, bb; double a;
+                    if (std::sscanf((*it)[1].str().c_str(), "%d,%d,%d,%lf", &r, &g, &bb, &a) != 4 ||
+                        r < 0 || r > 255 || g < 0 || g > 255 || bb < 0 || bb > 255) ok = false;
+                }
+            }
+            check("tint: every rgba() written is in range, for every base", ok);
+        }
+        check("tint: the logo turns too (any text of colour literals)",
+              tint_css("<stop stop-color=\"#15aabf\"/>", "#e64980") != "<stop stop-color=\"#15aabf\"/>");
+
+        // The settings file.
+        const auto dir = std::filesystem::temp_directory_path() / "lookit_selftest_tint";
+        std::filesystem::remove_all(dir);
+        const std::string f = (dir / "lookit" / "settings.json").string();
+        check("tint: first run -- no file, teal", core::load_tint(f) == core::kDefaultTint);
+        check("tint: save makes the folder and round-trips",
+              core::save_tint(f, "#E64980") && core::load_tint(f) == "#e64980");
+        check("tint: save refuses a non-colour and keeps the old", !core::save_tint(f, "blue") &&
+              core::load_tint(f) == "#e64980");
+        { std::ofstream o(f); o << "{\"tint\":\"#7950f2\",\"later\":42}"; }
+        core::save_tint(f, "#2f9e44");
+        { std::ifstream i(f); std::string all((std::istreambuf_iterator<char>(i)), {});
+          check("tint: save keeps the file's other settings", all.find("\"later\": 42") != std::string::npos &&
+                core::load_tint(f) == "#2f9e44"); }
+        { std::ofstream o(f); o << "{not json"; }
+        check("tint: a broken file -> teal, no throw", core::load_tint(f) == core::kDefaultTint);
+        { std::ofstream o(f); o << "{\"tint\":\"plaid\"}"; }
+        check("tint: a non-colour in the file -> teal", core::load_tint(f) == core::kDefaultTint);
+        std::filesystem::remove_all(dir);
     }
 
     std::cout << "-----------------------------------------------\n";

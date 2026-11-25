@@ -19,6 +19,7 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
     add_action("open",      sigc::mem_fun(*this, &Shell::on_open));
     add_action("about",     sigc::mem_fun(*this, &Shell::on_about));
     add_action("shortcuts", sigc::mem_fun(*this, &Shell::on_shortcuts));
+    add_action("colour",    sigc::mem_fun(*this, &Shell::on_colour));
     add_action("quit",      [this]() { close(); });
     add_action("toggle-left-drawer",  sigc::mem_fun(*this, &Shell::on_toggle_left_drawer));
     m_act_info = add_action("toggle-right-drawer", sigc::mem_fun(*this, &Shell::on_toggle_right_drawer));

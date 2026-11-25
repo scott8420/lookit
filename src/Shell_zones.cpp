@@ -135,6 +135,7 @@ void Shell::build_home() {  // zone: the hero + recent cards
         logo->set_from_icon_name("io.github.scott8420.Lookit");
         logo->set_pixel_size(112);
         m_hero.append(*logo);
+        m_hero_logo = logo;
         auto title = Gtk::make_managed<Gtk::Label>("Lookit");
         title->add_css_class("hero-title");
         m_hero.append(*title);
@@ -351,6 +352,8 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
             "window; Space at the bottom turns the page. Continuous scrolling "
             "is in the View menu.\n\n"
             "<b>Info</b> about the file: Shift+F9.\n\n"
+            "<b>Colour</b>: the menu's Colour… sets the window's base "
+            "colour -- teal, a preset, or your own.\n\n"
             "All keys: Ctrl+?");
         m_left_panel.append(*title);
         m_left_panel.append(*body);
@@ -448,6 +451,7 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     menu->append_section(panels);
 
     auto app = Gio::Menu::create();
+    app->append("Colour…", "win.colour");
     app->append("Keyboard Shortcuts", "win.shortcuts");
     app->append("About Lookit", "win.about");
     app->append("Quit", "win.quit");

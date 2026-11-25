@@ -36,7 +36,7 @@ Usage: ./install.sh [--default | --uninstall | --help]
   ./install.sh --uninstall  take it all out again (app, desktop entry, quick
                             look, tile) and put your previous defaults back;
                             your recents and signature stay in
-                            ~/.local/share/lookit
+                            ~/.local/share/lookit, your colour in ~/.config/lookit
   ./install.sh --help       this text
 HELP
 }
@@ -65,6 +65,8 @@ Lookit is installed. How to use it:
                             rotates, flips, crops, resizes, adjusts light;
                             Ctrl+S saves, Ctrl+Shift+S saves as PNG / JPEG /
                             TIFF / BMP / PDF
+  Menu -> Colour...         the window's base colour: teal, six presets, or
+                            Custom...; remembered in ~/.config/lookit
   lookit --help             command-line options
 
 Default app:  $(pwd)/install-defaults.sh            (Lookit opens PDFs, pictures, books)
@@ -90,8 +92,9 @@ if [ "${1:-}" = "--uninstall" ]; then
     rm -f "$BIN/lookit"
     rm -rf "$LIB"
     echo ""
-    echo "Lookit uninstalled. Kept: ~/.local/share/lookit (recents, your signature)."
-    echo "To remove those too:  rm -rf ~/.local/share/lookit"
+    echo "Lookit uninstalled. Kept: ~/.local/share/lookit (recents, your signature)"
+    echo "                      and ~/.config/lookit (your colour)."
+    echo "To remove those too:  rm -rf ~/.local/share/lookit ~/.config/lookit"
     echo "To install again:     $(pwd)/install.sh"
     exit 0
 fi
