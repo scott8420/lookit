@@ -47,6 +47,13 @@ inline constexpr double kSpine = 2;   // Book: the gap between facing pages
 Placed place(const std::vector<Size>& pages, double scale, double viewport_w,
              Mode mode = Mode::Continuous, double gap = kGap, double margin = kMargin);
 
+// PAGED view (the default, Scott s005): only the row holding `page` -- one
+// page, or a facing pair in Book mode -- is placed; it is centred in the
+// viewport when it fits and starts at the margin when zoomed past it. Every
+// other page gets a zero rect far above the view, so visible() never sees it.
+Placed place_row(const std::vector<Size>& pages, int page, double scale, double viewport_w,
+                 double viewport_h, Mode mode = Mode::Continuous, double margin = kMargin);
+
 // Pages touching [y0, y1): {first, last} inclusive; {-1, -1} when none.
 // (Every page in between is drawn; in Book mode a row's two pages may
 // differ in height, so this scans rather than bisects.)

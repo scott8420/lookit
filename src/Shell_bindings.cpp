@@ -36,6 +36,27 @@ void Shell::bind_actions() {  // bindings: win.* + recents group
         m_act_book->change_state(on);
         m_doc_view.set_book(on);
     }, false);
+    // Thumbnails: stateful (the toolbar toggle and the menu check follow it).
+    // On by default; a one-page file never shows the strip (sync_view_bar).
+    m_act_thumbs = add_action_bool("thumbs", [this] {
+        bool on = false;
+        m_act_thumbs->get_state(on);
+        m_act_thumbs->change_state(!on);
+        sync_view_bar();
+    }, true);
+    // Continuous scrolling: off by default -- View shows the page (or the
+    // facing pair) fitted to the window, and turns pages (Scott, s005).
+    m_act_continuous = add_action_bool("continuous", [this] {
+        bool on = false;
+        m_act_continuous->get_state(on);
+        on = !on;
+        m_act_continuous->change_state(on);
+        m_doc_view.set_paged(!on);
+    }, false);
+    m_act_find = add_action("find", sigc::mem_fun(*this, &Shell::on_find));
+    add_action("find-next",  [this] { on_find_step(+1); });
+    add_action("find-prev",  [this] { on_find_step(-1); });
+    add_action("find-close", sigc::mem_fun(*this, &Shell::on_find_close));
     add_action("next-page", [this] { m_doc_view.next_page(); });
     add_action("prev-page", [this] { m_doc_view.prev_page(); });
     add_action("go-to-page", [this] {

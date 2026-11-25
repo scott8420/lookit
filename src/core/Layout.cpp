@@ -96,6 +96,34 @@ Placed place(const std::vector<Size>& pages, double scale, double viewport_w, Mo
     return out;
 }
 
+Placed place_row(const std::vector<Size>& pages, int page, double scale, double vw, double vh,
+                 Mode mode, double margin) {
+    Placed out;
+    out.pages.assign(pages.size(), Rect{0, -1e9, 0, 0});
+    if (pages.empty()) return out;
+    if (mode == Mode::Book && pages.size() == 1) mode = Mode::Continuous;
+    page = std::clamp(page, 0, int(pages.size()) - 1);
+    const auto rs = rows(int(pages.size()), mode);
+    const Row& r = rs[std::size_t(row_of(page, mode))];
+    const Size rsz = row_size(pages, r, mode);
+    const double spine = mode == Mode::Book ? kSpine : 0;
+    const double rw = rsz.w * scale + spine, rh = rsz.h * scale;
+    out.width = std::max(vw, rw + 2 * margin);
+    out.height = std::max(vh, rh + 2 * margin);
+    const double y = std::floor((out.height - rh) / 2);   // centred; = margin when zoomed past
+    const double mid = std::floor(out.width / 2);
+    auto put = [&](int i, double x) {
+        const auto& s = pages[std::size_t(i)];
+        out.pages[std::size_t(i)] = {x, y + std::floor((rh - s.h * scale) / 2), s.w * scale, s.h * scale};
+    };
+    if (mode == Mode::Continuous) put(r.left, std::floor((out.width - pages[std::size_t(r.left)].w * scale) / 2));
+    else {
+        if (r.left >= 0) put(r.left, mid - spine / 2 - pages[std::size_t(r.left)].w * scale);
+        if (r.right >= 0) put(r.right, mid + spine / 2);
+    }
+    return out;
+}
+
 std::pair<int, int> visible(const Placed& p, double y0, double y1) {
     int first = -1, last = -1;
     if (y1 <= y0) return {-1, -1};

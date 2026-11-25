@@ -32,6 +32,8 @@ public:
     ~DocView() override;
 
     void set_document(std::shared_ptr<Document> doc);   // null clears
+    // The same document, edited (page tools): keep the page, zoom and fit.
+    void refresh(std::shared_ptr<Document> doc, int page);
     const std::shared_ptr<Document>& document() const { return m_doc; }
 
     void zoom_in();
@@ -39,8 +41,16 @@ public:
     void zoom_actual();          // 100%
     void fit_width();
     void fit_page();
-    void set_book(bool on);      // Book view: spreads, page 1 alone on the right
+    void set_book(bool on);
+    // Find-in-document: every hit is tinted; `show_hit` makes one current
+    // (stronger tint) and scrolls it to the middle of the view.
+    void set_hits(std::vector<core::search::Hit> hits);
+    void show_hit(int index);      // Book view: spreads, page 1 alone on the right
     bool book() const { return m_mode == core::layout::Mode::Book; }
+    // Paged (default): only the current page -- or facing pair -- is shown,
+    // fitted to the window until you zoom. Off: one continuous column.
+    void set_paged(bool on);
+    bool paged() const { return m_paged; }
     void go_to(int page);        // 0-based
     void next_page();
     void prev_page();
@@ -76,6 +86,13 @@ private:
     double m_scale = 1.0;
     Fit    m_fit = Fit::Width;
     core::layout::Mode m_mode = core::layout::Mode::Continuous;
+    std::vector<core::search::Hit> m_hits;
+    int    m_hit = -1;
+    bool   m_paged = true;
+    double m_flip = 0;                   // wheel push past an edge, toward a page turn
+    void   turn(int dir, bool to_end);   // paged: next / previous row, top or bottom
+    bool   at_top() const;
+    bool   at_bottom() const;
     int    m_page = -1;
     int    m_vw = 0, m_vh = 0;           // viewport (canvas allocation)
     bool   m_live = false;               // a pinch is under way: stretch, don't re-render

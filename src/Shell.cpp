@@ -31,6 +31,10 @@ Shell::Shell()
       m_fit_page("view.fit_page"),
       m_book("view.book"),
       m_view_empty("view.empty"),
+      m_view_body("view.body", Gtk::Orientation::HORIZONTAL),
+      m_find_rev("view.find"),
+      m_find_bar("view.find_bar", Gtk::Orientation::HORIZONTAL, 4),
+      m_find_count("view.find_count"),
       m_overlay("shell.drawers.overlay"),
       m_scrim("shell.drawers.scrim", Gtk::Orientation::VERTICAL),
       m_left_tab("shell.drawers.left_tab"),
@@ -41,7 +45,11 @@ Shell::Shell()
       m_right_panel("shell.drawers.right_panel", Gtk::Orientation::VERTICAL, 8),
       m_info("shell.drawers.info"),
       m_toast("shell.toast"),
-      m_toast_label("shell.toast_label") {
+      m_toast_label("shell.toast_label"),
+      m_extract_rev("view.extract"),
+      m_extract_bar("view.extract_bar", Gtk::Orientation::HORIZONTAL, 6),
+      m_extract_entry("view.extract_entry"),
+      m_extract_msg("view.extract_msg") {
     set_name("shell.window");
 }
 
@@ -55,6 +63,7 @@ void Shell::build_ui() {
     bind_actions();
     bind_keys();
     bind_drop();
+    bind_edit();
     m_recents_file = recents_file();
     m_recents = core::load_recents(m_recents_file);
     rebuild_recents();

@@ -11,6 +11,7 @@
 #include <glibmm/convert.h>
 #include <glibmm/main.h>
 #include <glibmm/miscutils.h>
+#include <gtkmm/alertdialog.h>
 #include <gtkmm/filedialog.h>
 #include <gtkmm/filefilter.h>
 
@@ -25,6 +26,27 @@ namespace lookit {
 // (App::on_open), the CLI, the tile. Open it, show it on View, remember it --
 // or say in a toast why not and stay where we were.
 void Shell::open_path(const std::string& path) {  // handler: open, show, remember
+    // Unsaved page changes in the open PDF: don't drop them silently.
+    if (m_dirty && m_editing && path != m_doc_path) {
+        auto dialog = Gtk::AlertDialog::create("Save the changes to " +
+            (m_doc_path.empty() ? std::string("Untitled.pdf") : std::filesystem::path(m_doc_path).filename().string()) +
+            " first?");
+        dialog->set_buttons({"Cancel", "Don't Save", "Save"});
+        dialog->set_cancel_button(0);
+        dialog->set_default_button(2);
+        dialog->choose(*this, [this, dialog, path](const Glib::RefPtr<Gio::AsyncResult>& res) {
+            int pick = 0;
+            try { pick = dialog->choose_finish(res); } catch (const Glib::Error&) { return; }
+            if (pick == 0) return;
+            if (pick == 2) {
+                if (m_doc_path.empty()) { on_save_as(); return; }
+                if (!save_to(m_doc_path)) return;
+            }
+            m_dirty = false;
+            open_path(path);
+        });
+        return;
+    }
     std::string error;
     auto doc = Document::open(path, error);
     if (!doc) {
@@ -37,10 +59,17 @@ void Shell::open_path(const std::string& path) {  // handler: open, show, rememb
     m_doc_view.set_visible(true);
     go("view");
     m_doc_view.set_document(shared);
+    m_thumbs.set_document(shared);
+    if (shared->kind() == core::Kind::Pdf) begin_editing(path, shared->count());
+    else { m_editing = false; m_dirty = false; m_thumbs.set_editable(false); m_doc_path.clear(); }
+    m_hits.clear();
+    m_hit = -1;
+    if (m_find_rev.get_reveal_child() && !m_find_text.empty()) start_search(m_find_text);
     note_recent(path);
     set_title(shared->name() + " -- Lookit");
     refresh_info();
     sync_view_bar();
+    sync_edit_ui();
     present();
 }
 
@@ -116,6 +145,33 @@ void Shell::on_page_entry() {  // handler: typed a page number
     }
     sync_view_bar();
     gtk_widget_grab_focus(gtk_scrolled_window_get_child(m_doc_view.gobj()));
+}
+
+// ── Find ────────────────────────────────────────────────────────────────────
+void Shell::on_find() {  // handler: Ctrl+F -- open the find bar
+    if (!m_doc_view.document()) return;
+    go("view");
+    m_find_rev.set_reveal_child(true);
+    m_find_entry.grab_focus();
+    m_find_entry.select_region(0, -1);
+}
+
+void Shell::on_find_step(int dir) {  // handler: Enter / Shift+Enter / arrows
+    if (m_hits.empty()) return;
+    m_hit = core::search::step(m_hits, m_hit, dir);
+    m_doc_view.show_hit(m_hit);
+    sync_search_label();
+}
+
+void Shell::on_find_close() {  // handler: Esc / the X
+    m_find_idle.disconnect();
+    m_find_rev.set_reveal_child(false);
+    m_find_text.clear();
+    m_hits.clear();
+    m_hit = -1;
+    m_doc_view.set_hits({});
+    sync_search_label();
+    if (m_doc_view.document()) gtk_widget_grab_focus(gtk_scrolled_window_get_child(m_doc_view.gobj()));
 }
 
 void Shell::on_about() {  // handler: About (hide-on-close singleton)

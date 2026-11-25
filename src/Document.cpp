@@ -7,6 +7,9 @@
 #include <glibmm/error.h>
 #include <poppler.h>
 
+#include <algorithm>
+#include <cmath>
+#include <map>
 #include <vector>
 
 // Document.cpp -- the kinds Lookit can draw. Each backend opens, measures, and
@@ -22,45 +25,111 @@ std::string Document::name() const {
 namespace {
 
 // ── PDF: poppler-glib ───────────────────────────────────────────────────────
+// A composite: each page is (source document, page number, quarter turns), so
+// the page tools' edited list (core::Pages) and a freshly opened file are the
+// same thing. Poppler documents are shared through a small pool, so rebuilding
+// after an edit re-reads nothing.
+struct Poppler {
+    PopplerDocument* doc = nullptr;
+    std::vector<PopplerPage*> pages;
+    ~Poppler() {
+        for (auto* p : pages) if (p) g_object_unref(p);
+        if (doc) g_object_unref(doc);
+    }
+};
+
+std::map<std::string, std::weak_ptr<Poppler>>& poppler_pool() {
+    static std::map<std::string, std::weak_ptr<Poppler>> pool;
+    return pool;
+}
+
+std::shared_ptr<Poppler> load_poppler(const std::string& path, std::string& error) {
+    auto& pool = poppler_pool();
+    if (auto it = pool.find(path); it != pool.end())
+        if (auto live = it->second.lock()) return live;
+    GError* err = nullptr;
+    std::string uri;
+    try { uri = Glib::filename_to_uri(path); }
+    catch (const Glib::Error& e) { error = e.what(); return nullptr; }
+    PopplerDocument* doc = poppler_document_new_from_file(uri.c_str(), nullptr, &err);
+    if (!doc) {
+        if (err && err->domain == POPPLER_ERROR && err->code == POPPLER_ERROR_ENCRYPTED)
+            error = "This PDF is locked with a password. (Opening locked PDFs comes later.)";
+        else
+            error = std::string("Poppler could not read it: ") + (err ? err->message : "unknown error");
+        if (err) g_error_free(err);
+        return nullptr;
+    }
+    auto p = std::make_shared<Poppler>();
+    p->doc = doc;
+    const int n = poppler_document_get_n_pages(doc);
+    for (int i = 0; i < n; ++i) p->pages.push_back(poppler_document_get_page(doc, i));
+    pool[path] = p;
+    return p;
+}
+
 class PdfDocument final : public Document {
 public:
-    PdfDocument(PopplerDocument* doc, std::string path) : m_doc(doc) {
+    struct Page { std::shared_ptr<Poppler> src; int index; int turn; };
+
+    PdfDocument(std::vector<Page> pages, std::string path, std::string title) : m_pages(std::move(pages)) {
         m_kind = core::Kind::Pdf;
         m_path = std::move(path);
-        if (gchar* t = poppler_document_get_title(m_doc)) { m_title = t; g_free(t); }
-        const int n = poppler_document_get_n_pages(m_doc);
-        m_pages.reserve(std::size_t(n));
-        m_sizes.reserve(std::size_t(n));
-        for (int i = 0; i < n; ++i) {
-            PopplerPage* p = poppler_document_get_page(m_doc, i);
+        m_title = std::move(title);
+        for (const auto& pg : m_pages) {
             double w = 612, h = 792;   // a page poppler can't give: US Letter, not a crash
-            if (p) poppler_page_get_size(p, &w, &h);
-            m_pages.push_back(p);
-            m_sizes.push_back({w, h});
+            if (auto* p = raw(pg)) poppler_page_get_size(p, &w, &h);
+            m_base.push_back({w, h});
         }
     }
-    ~PdfDocument() override {
-        for (auto* p : m_pages) if (p) g_object_unref(p);
-        g_object_unref(m_doc);
-    }
     int count() const override { return int(m_pages.size()); }
-    core::layout::Size size(int i) const override { return m_sizes.at(std::size_t(i)); }
+    core::layout::Size size(int i) const override {
+        const auto b = m_base.at(std::size_t(i));
+        return m_pages[std::size_t(i)].turn % 2 ? core::layout::Size{b.h, b.w} : b;
+    }
+    std::vector<core::search::Hit> find(int i, const std::string& text) const override {
+        std::vector<core::search::Hit> out;
+        PopplerPage* p = raw(m_pages.at(std::size_t(i)));
+        if (!p || text.empty()) return out;
+        const auto b = m_base[std::size_t(i)];
+        const int turn = m_pages[std::size_t(i)].turn;
+        GList* rects = poppler_page_find_text_with_options(p, text.c_str(), POPPLER_FIND_DEFAULT);
+        for (GList* l = rects; l; l = l->next) {
+            auto* r = static_cast<PopplerRectangle*>(l->data);
+            const auto flat = core::search::from_pdf(r->x1, r->y1, r->x2, r->y2, b.h);
+            out.push_back({i, core::search::turn_rect(flat, b.w, b.h, turn)});
+            poppler_rectangle_free(r);
+        }
+        g_list_free(rects);
+        core::search::sort(out);
+        return out;
+    }
     void render(cairo_t* cr, int i, double scale) const override {
-        PopplerPage* p = m_pages.at(std::size_t(i));
-        const auto s = m_sizes.at(std::size_t(i));
+        const auto& pg = m_pages.at(std::size_t(i));
+        const auto b = m_base[std::size_t(i)];
         cairo_save(cr);
         cairo_scale(cr, scale, scale);
-        cairo_rectangle(cr, 0, 0, s.w, s.h);
+        // Quarter turns clockwise, about the page's own corner.
+        switch (pg.turn) {
+            case 1: cairo_translate(cr, b.h, 0);   cairo_rotate(cr, G_PI / 2); break;
+            case 2: cairo_translate(cr, b.w, b.h); cairo_rotate(cr, G_PI); break;
+            case 3: cairo_translate(cr, 0, b.w);   cairo_rotate(cr, 3 * G_PI / 2); break;
+            default: break;
+        }
+        cairo_rectangle(cr, 0, 0, b.w, b.h);
         cairo_set_source_rgb(cr, 1, 1, 1);
         cairo_fill(cr);
-        if (p) poppler_page_render(p, cr);
+        if (auto* p = raw(pg)) poppler_page_render(p, cr);
         cairo_restore(cr);
     }
 
 private:
-    PopplerDocument* m_doc;
-    std::vector<PopplerPage*> m_pages;
-    std::vector<core::layout::Size> m_sizes;
+    static PopplerPage* raw(const Page& pg) {
+        return pg.src && pg.index >= 0 && pg.index < int(pg.src->pages.size())
+                   ? pg.src->pages[std::size_t(pg.index)] : nullptr;
+    }
+    std::vector<Page> m_pages;
+    std::vector<core::layout::Size> m_base;   // unturned sizes
 };
 
 // ── Pictures: GdkTexture (glycin / gdk-pixbuf underneath) ───────────────────
@@ -94,20 +163,13 @@ private:
 };
 
 std::unique_ptr<Document> open_pdf(const std::string& path, std::string& error) {
-    GError* err = nullptr;
-    std::string uri;
-    try { uri = Glib::filename_to_uri(path); }
-    catch (const Glib::Error& e) { error = e.what(); return nullptr; }
-    PopplerDocument* doc = poppler_document_new_from_file(uri.c_str(), nullptr, &err);
-    if (!doc) {
-        if (err && err->domain == POPPLER_ERROR && err->code == POPPLER_ERROR_ENCRYPTED)
-            error = "This PDF is locked with a password. (Opening locked PDFs comes later.)";
-        else
-            error = std::string("Poppler could not read it: ") + (err ? err->message : "unknown error");
-        if (err) g_error_free(err);
-        return nullptr;
-    }
-    return std::make_unique<PdfDocument>(doc, path);
+    auto pop = load_poppler(path, error);
+    if (!pop) return nullptr;
+    std::string title;
+    if (gchar* t = poppler_document_get_title(pop->doc)) { title = t; g_free(t); }
+    std::vector<PdfDocument::Page> pages;
+    for (int i = 0; i < int(pop->pages.size()); ++i) pages.push_back({pop, i, 0});
+    return std::make_unique<PdfDocument>(std::move(pages), path, title);
 }
 
 std::unique_ptr<Document> open_image(const std::string& path, std::string& error) {
@@ -135,6 +197,43 @@ std::unique_ptr<Document> open_image(const std::string& path, std::string& error
 }
 
 }  // namespace
+
+Glib::RefPtr<Gdk::Texture> render_texture(const Document& doc, int i, double s, double max_pixels) {
+    const auto sz = doc.size(i);
+    double rs = s;
+    if (sz.w * sz.h * rs * rs > max_pixels) rs = std::sqrt(max_pixels / (sz.w * sz.h));
+    const int w = std::max(1, int(std::ceil(sz.w * rs)));
+    const int h = std::max(1, int(std::ceil(sz.h * rs)));
+    cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_t* cr = cairo_create(surf);
+    doc.render(cr, i, rs);
+    cairo_destroy(cr);
+    cairo_surface_flush(surf);
+    const int stride = cairo_image_surface_get_stride(surf);
+    GBytes* bytes = g_bytes_new(cairo_image_surface_get_data(surf), std::size_t(stride) * std::size_t(h));
+    cairo_surface_destroy(surf);
+    // GDK_MEMORY_DEFAULT is premultiplied BGRA (little-endian) -- Cairo's ARGB32.
+    GdkTexture* t = gdk_memory_texture_new(w, h, GDK_MEMORY_DEFAULT, bytes, std::size_t(stride));
+    g_bytes_unref(bytes);
+    return Glib::wrap(t);
+}
+
+void Document::forget(const std::string& path) { poppler_pool().erase(path); }
+
+std::shared_ptr<Document> Document::compose(const std::vector<std::string>& sources,
+                                            const std::vector<core::PageRec>& recs, const std::string& path,
+                                            std::string& error) {
+    std::vector<std::shared_ptr<Poppler>> pops;
+    for (const auto& s : sources) {
+        std::string e;
+        pops.push_back(load_poppler(s, e));   // a source that fails gives blank pages, not a crash
+        if (!pops.back() && error.empty()) error = e;
+    }
+    std::vector<PdfDocument::Page> pages;
+    for (const auto& r : recs)
+        pages.push_back({r.src >= 0 && r.src < int(pops.size()) ? pops[std::size_t(r.src)] : nullptr, r.index, r.turn});
+    return std::make_shared<PdfDocument>(std::move(pages), path, "");
+}
 
 std::unique_ptr<Document> Document::open(const std::string& path, std::string& error) {
     const core::Kind k = core::detect(path);

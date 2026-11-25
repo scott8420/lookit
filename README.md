@@ -15,8 +15,24 @@ spacebar quick look, in Lookit and in Files.
 ./build/lookit_selftest      # the GTK-free core, headless
 ```
 
-Deps (Fedora): `gtkmm4.0-devel spdlog-devel poppler-glib-devel cmake gcc-c++`.
-Deps (Ubuntu/Debian): `libgtkmm-4.0-dev libspdlog-dev libpoppler-glib-dev cmake g++`.
+Deps (Fedora): `gtkmm4.0-devel spdlog-devel poppler-glib-devel qpdf-devel cmake gcc-c++`.
+Deps (Ubuntu/Debian): `libgtkmm-4.0-dev libspdlog-dev libpoppler-glib-dev libqpdf-dev cmake g++`.
+
+## Page tools
+
+Rotate (Ctrl+L / Ctrl+R), delete (Delete), duplicate (Ctrl+D), drag
+thumbnails to rearrange, drop PDFs or pictures between thumbnails to insert
+them, Insert Pages from File (Ctrl+I), Combine Files into One, Extract Pages
+(Ctrl+E). Every change is undoable (Ctrl+Z / Ctrl+Shift+Z); Save (Ctrl+S)
+writes the PDF with qpdf.
+
+## Quick look in Files
+
+`./install.sh` also installs `lookit-peek` and makes it Files' spacebar
+previewer (in place of Sushi): Space on a file shows PDFs and pictures in
+Lookit's page view, text as text, anything else as a card. Space / Esc close,
+Enter opens in Lookit, arrows move the selection. `./install.sh --uninstall`
+gives Space back to Sushi.
 
 ## Install (per user, no root)
 

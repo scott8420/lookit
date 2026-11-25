@@ -101,6 +101,21 @@ inline const char* LOOKIT_CSS = R"CSS(
     .view-bar entry.page-entry { min-width: 0; min-height: 24px; padding: 0 6px; border-radius: 8px;
                                  background-color: rgba(0,0,0,0.25); color: #ffffff; }
     .view-empty { color: rgba(238,248,250,0.55); }
+    .find-bar { margin-top: 0; }
+    .find-bar entry { min-height: 26px; border-radius: 999px; }
+
+    /* Thumbnails: a quiet strip; the current page gets the teal ring. */
+    .thumbs { background-color: rgba(0,0,0,0.16); border-right: 1px solid rgba(255,255,255,0.06); }
+    listview.thumb-list { background: transparent; padding: 8px 6px; }
+    listview.thumb-list > row { padding: 6px 4px; border-radius: 10px; background: transparent; }
+    listview.thumb-list > row:hover { background-color: rgba(255,255,255,0.06); }
+    listview.thumb-list > row:selected { background-color: rgba(153,233,242,0.16); color: #ffffff; }
+    listview.thumb-list > row:selected .thumb-pic { outline: 2px solid #99e9f2; outline-offset: 1px; }
+    .thumb-pic { box-shadow: 0 2px 6px rgba(0,0,0,0.45); }
+    .thumb.dragging { opacity: 0.4; }
+    .thumb.drop-before { border-top: 3px solid #99e9f2; }
+    .thumb.drop-after  { border-bottom: 3px solid #99e9f2; }
+    .thumb-num { font-size: 0.8em; color: rgba(238,248,250,0.65); font-feature-settings: "tnum"; }
     lookit-canvas:focus-visible { outline: none; }
 
     /* Messages (a file that wouldn't open). */

@@ -4,7 +4,7 @@
 # D-Bus service, and the quick-settings tile. No root; all under ~/.local.
 # (Fowler's shape.)
 #
-#   ~/.local/lib/lookit/lookit   the binary
+#   ~/.local/lib/lookit/lookit   the binary (+ lookit-peek, Files' spacebar preview)
 #   ~/.local/bin/lookit         a link to it, for the command line
 #   ~/.local/share/...         desktop entry, D-Bus service, icons (install-desktop.sh)
 #   ~/.local/share/gnome-shell/extensions/lookit-tile@...   the tile (install-extension.sh)
@@ -33,12 +33,15 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 ./build.sh
-[ -f build/lookit ] || { echo "Missing build/lookit after the build." >&2; exit 1; }
+for f in build/lookit build/lookit-peek; do
+    [ -f "$f" ] || { echo "Missing $f after the build." >&2; exit 1; }
+done
 
 mkdir -p "$LIB" "$BIN"
 # Copy beside, then rename: a running Lookit keeps its old file, nothing is
 # half-written ("Text file busy" never happens).
 install -m 755 build/lookit "$LIB/.lookit.new" && mv -f "$LIB/.lookit.new" "$LIB/lookit"
+install -m 755 build/lookit-peek "$LIB/.lookit-peek.new" && mv -f "$LIB/.lookit-peek.new" "$LIB/lookit-peek"
 ln -sfn "$LIB/lookit" "$BIN/lookit"
 echo "Installed: $LIB/lookit, linked from $BIN/lookit"
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "Note: $BIN is not on your PATH -- the tile and app grid don't need it." ;; esac

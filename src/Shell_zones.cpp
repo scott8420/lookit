@@ -8,6 +8,8 @@
 #include <gtkmm/listboxrow.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/separator.h>
+#include <gtkmm/eventcontrollerkey.h>
+#include <gtkmm/togglebutton.h>
 
 // Shell_zones.cpp -- ZONES. Construction of the named regions: the frame and
 // header, the sidebar, the Home and View pages, the drawers, the menu model.
@@ -229,7 +231,7 @@ void Shell::build_view() {  // zone: the toolbar + DocView
     });
     m_bar.append(m_fit_width);
     m_fit_page.set_icon_name("view-fullscreen-symbolic");
-    m_fit_page.set_tooltip_text("Fit page (Ctrl+2)");
+    m_fit_page.set_tooltip_text("Fit window (Ctrl+9)");
     m_fit_page.signal_toggled().connect([this] {
         if (!m_syncing && m_fit_page.get_active()) activate_action("win.fit-page");
         else if (!m_syncing) sync_view_bar();
@@ -242,16 +244,70 @@ void Shell::build_view() {  // zone: the toolbar + DocView
     m_book.set_action_name("win.book");
     m_bar.append(m_book);
     m_bar.append(*Gtk::make_managed<Gtk::Separator>(Gtk::Orientation::VERTICAL));
+    {
+        auto thumbs = Gtk::make_managed<Gtk::ToggleButton>();
+        thumbs->set_icon_name("view-paged-symbolic");
+        thumbs->set_tooltip_text("Thumbnails (Ctrl+T)");
+        thumbs->set_action_name("win.thumbs");
+        m_bar.prepend(*thumbs);
+    }
+    m_bar.append(*icon_button("system-search-symbolic", "Find (Ctrl+F)", "win.find"));
     m_bar.append(*icon_button("dialog-information-symbolic", "Info (Shift+F9)", "win.toggle-right-drawer"));
 
     m_view.append(m_bar);
+
+    // ── The find bar: a second pill under the first, revealed by Ctrl+F. ──
+    // SearchEntry debounces typing itself (search-changed); Enter / Shift+Enter
+    // step through the hits, Esc closes (stop-search).
+    m_find_bar.add_css_class("view-bar");
+    m_find_bar.add_css_class("find-bar");
+    m_find_bar.set_halign(Gtk::Align::CENTER);
+    m_find_entry.set_name("view.find_entry");
+    m_find_entry.set_placeholder_text("Find in document");
+    m_find_entry.set_size_request(260, -1);
+    m_find_entry.signal_search_changed().connect([this] { start_search(m_find_entry.get_text()); });
+    m_find_entry.signal_activate().connect([this] { on_find_step(+1); });
+    m_find_entry.signal_next_match().connect([this] { on_find_step(+1); });
+    m_find_entry.signal_previous_match().connect([this] { on_find_step(-1); });
+    m_find_entry.signal_stop_search().connect([this] { on_find_close(); });
+    {
+        auto shift_enter = Gtk::EventControllerKey::create();
+        shift_enter->signal_key_pressed().connect([this](guint kv, guint, Gdk::ModifierType st) {
+            if ((kv == GDK_KEY_Return || kv == GDK_KEY_KP_Enter) &&
+                (st & Gdk::ModifierType::SHIFT_MASK) != Gdk::ModifierType{}) {
+                on_find_step(-1);
+                return true;
+            }
+            return false;
+        }, false);
+        m_find_entry.add_controller(shift_enter);
+    }
+    m_find_bar.append(m_find_entry);
+    m_find_count.add_css_class("page-label");
+    m_find_count.set_width_chars(14);
+    m_find_bar.append(m_find_count);
+    m_find_bar.append(*icon_button("go-up-symbolic", "Previous match (Shift+Enter)", "win.find-prev"));
+    m_find_bar.append(*icon_button("go-down-symbolic", "Next match (Enter)", "win.find-next"));
+    m_find_bar.append(*icon_button("window-close-symbolic", "Close (Esc)", "win.find-close"));
+    m_find_rev.set_child(m_find_bar);
+    m_find_rev.set_transition_type(Gtk::RevealerTransitionType::SLIDE_DOWN);
+    m_find_rev.set_reveal_child(false);
+    m_view.append(m_find_rev);
+
+    // ── thumbs | page view ──
+    m_thumbs.signal_pick().connect([this](int p) { m_doc_view.go_to(p); });
+    m_thumbs.set_visible(false);
+    m_view_body.append(m_thumbs);
 
     // Empty state: what View says with nothing open.
     m_view_empty.set_text("Nothing open. Ctrl+O, or drop a file here.");
     m_view_empty.add_css_class("view-empty");
     m_view_empty.set_vexpand(true);
-    m_view.append(m_view_empty);
-    m_view.append(m_doc_view);
+    m_view_empty.set_hexpand(true);
+    m_view_body.append(m_view_empty);
+    m_view_body.append(m_doc_view);
+    m_view_body.set_vexpand(true);
+    m_view.append(m_view_body);
     m_doc_view.set_visible(false);
     m_doc_view.signal_changed().connect(sigc::mem_fun(*this, &Shell::sync_view_bar));
 
@@ -285,10 +341,15 @@ void Shell::build_drawers() {  // zone: overlay + two edge drawers, tabs, scrim
             "<b>Open</b> with Ctrl+O, a drop, Files, or the quick-settings tile.\n\n"
             "<b>Read:</b> Space / Shift+Space page down / up, Home / End, "
             "← → a page at a time, Ctrl+G go to a page.\n\n"
+            "<b>Find</b> (Ctrl+F): every match tinted; Enter / Shift+Enter step through "
+            "them. <b>Thumbnails</b>: Ctrl+T.\n\n"
             "<b>Book view</b> (Ctrl+B): facing pages like a printed book -- "
             "page 1 alone on the right, then 2|3, 4|5 ...\n\n"
             "<b>Zoom:</b> Ctrl+= / Ctrl+−, Ctrl+0 actual size, Ctrl+1 fit width, "
-            "Ctrl+2 fit page -- or Ctrl+wheel, or pinch.\n\n"
+            "Ctrl+9 fit window -- or Ctrl+wheel, or pinch.\n\n"
+            "<b>Pages:</b> one page (or facing pair) at a time, fitted to the "
+            "window; Space at the bottom turns the page. Continuous scrolling "
+            "is in the View menu.\n\n"
             "<b>Info</b> about the file: Shift+F9.\n\n"
             "All keys: Ctrl+?");
         m_left_panel.append(*title);
@@ -360,6 +421,9 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
 
     auto file = Gio::Menu::create();
     file->append("Open…", "win.open");
+    file->append("Save", "win.save");
+    file->append("Save As…", "win.save-as");
+    file->append("Combine Files into One…", "win.combine");
     m_recents_menu = Gio::Menu::create();
     file->append_submenu("Open Recent", m_recents_menu);
     menu->append_section(file);
@@ -369,8 +433,11 @@ Glib::RefPtr<Gio::Menu> Shell::build_menu() {  // zone: hamburger model
     view->append("Zoom Out", "win.zoom-out");
     view->append("Actual Size", "win.zoom-actual");
     view->append("Fit Width", "win.fit-width");
-    view->append("Fit Page", "win.fit-page");
+    view->append("Fit Window", "win.fit-page");
     view->append("Book View", "win.book");
+    view->append("Thumbnails", "win.thumbs");
+    view->append("Continuous Scrolling", "win.continuous");
+    view->append("Find…", "win.find");
     view->append("Go to Page…", "win.go-to-page");
     menu->append_section(view);
 

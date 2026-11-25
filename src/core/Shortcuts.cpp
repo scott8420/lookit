@@ -113,6 +113,20 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // Doc-only: Esc is heard by the window, and only while a drawer is open.
         {"Drawers", "", {}, "Esc", "Close the open drawer"},
 
+        // ── Edit (page tools) ─────────────────────────────────────────────────
+        // Doc-only: the window hears these, never taking them from a text box.
+        {"Edit", "", {}, "Ctrl+Z", "Undo -- anywhere but a text box"},
+        {"Edit", "", {}, "Ctrl+Shift+Z  /  Ctrl+Y", "Redo"},
+        {"Edit", "", {}, "Delete", "Delete the page you're on"},
+        {"Edit", "", {}, "Drag a thumbnail", "Move the page; drop files between thumbnails to insert them"},
+        {"Edit", "win.rotate-left",  {"<Ctrl>l"}, "", "Rotate left"},
+        {"Edit", "win.rotate-right", {"<Ctrl>r"}, "", "Rotate right"},
+        {"Edit", "win.duplicate-page", {"<Ctrl>d"}, "", "Duplicate the page"},
+        {"Edit", "win.insert-file",  {"<Ctrl>i"}, "", "Insert pages from a file (PDF or picture)"},
+        {"Edit", "win.extract",      {"<Ctrl>e"}, "", "Extract pages to a new PDF"},
+        {"Edit", "win.save",         {"<Ctrl>s"}, "", "Save"},
+        {"Edit", "win.save-as",      {"<Ctrl><Shift>s"}, "", "Save as"},
+
         // ── General ───────────────────────────────────────────────────────────
         {"General", "win.open",          {"<Ctrl>o"}, "", "Open a PDF or a picture"},
         {"General", "win.shortcuts",     {"<Ctrl>question", "<Ctrl>slash"}, "",
@@ -128,11 +142,14 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         // ── Reading ───────────────────────────────────────────────────────────
         // Doc-only: the page view hears these itself (DocView), so they never
         // leave a text box without its own keys.
-        {"Reading", "", {}, "Space  /  Shift+Space", "Down / up a screen"},
+        {"Reading", "", {}, "Space  /  Shift+Space", "Down / up a screen; past the edge, turn the page"},
         {"Reading", "", {}, "Page Down  /  Page Up", "Down / up a screen"},
         {"Reading", "", {}, "\u2190  /  \u2192", "Previous / next page (spread, in Book view)"},
         {"Reading", "", {}, "Home  /  End", "First / last page"},
         {"Reading", "win.go-to-page",    {"<Ctrl>g"}, "", "Go to a page"},
+        {"Reading", "win.find",          {"<Ctrl>f"}, "", "Find in the document"},
+        {"Reading", "", {}, "Enter  /  Shift+Enter", "Next / previous match (in Find)"},
+        {"Reading", "win.thumbs",        {"<Ctrl>t"}, "", "Thumbnails -- show / hide"},
         {"Reading", "win.book",          {"<Ctrl>b"}, "", "Book view -- spreads, page 1 alone on the right"},
 
         // ── Zoom ──────────────────────────────────────────────────────────────
@@ -140,7 +157,7 @@ const std::vector<ShortcutSpec>& shortcut_registry() {
         {"Zoom", "win.zoom-out",    {"<Ctrl>minus", "<Ctrl>KP_Subtract"}, "", "Zoom out"},
         {"Zoom", "win.zoom-actual", {"<Ctrl>0", "<Ctrl>KP_0"}, "", "Actual size (100%)"},
         {"Zoom", "win.fit-width",   {"<Ctrl>1"}, "", "Fit width"},
-        {"Zoom", "win.fit-page",    {"<Ctrl>2"}, "", "Fit page"},
+        {"Zoom", "win.fit-page",    {"<Ctrl>9", "<Ctrl>2"}, "", "Fit window -- the whole page (or pair)"},
     };
     return kReg;
 }

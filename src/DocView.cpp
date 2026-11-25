@@ -198,6 +198,9 @@ DocView::DocView() {
         auto* v = canvas(m_canvas)->vadj;
         const double page = gtk_adjustment_get_page_size(v);
         auto by = [&](double d) {
+            // Paged: past the edge of the page turns it (Preview's Space).
+            if (m_paged && d > 0 && at_bottom()) { turn(+1, false); return true; }
+            if (m_paged && d < 0 && at_top())    { turn(-1, true);  return true; }
             gtk_adjustment_set_value(v, gtk_adjustment_get_value(v) + d);
             return true;
         };
@@ -219,6 +222,25 @@ DocView::DocView() {
         }
     }, false);
     cw->add_controller(keys);
+
+    // Paged: a wheel or two-finger push PAST the top or bottom turns the
+    // page. A little resistance (m_flip) so arriving at the edge doesn't flip
+    // at once; within the page the ScrolledWindow scrolls as usual.
+    auto edge = Gtk::EventControllerScroll::create();
+    edge->set_flags(Gtk::EventControllerScroll::Flags::VERTICAL);
+    edge->signal_scroll().connect([this, e = edge.get()](double, double dy) {
+        if (!m_paged || !m_doc || dy == 0) return false;
+        if ((e->get_current_event_state() & Gdk::ModifierType::CONTROL_MASK) != Gdk::ModifierType{})
+            return false;
+        const bool down = dy > 0;
+        if ((down && !at_bottom()) || (!down && !at_top())) { m_flip = 0; return false; }
+        m_flip += std::abs(dy) < 1.0 ? std::abs(dy) * 0.15 : 1.0;   // smooth deltas are small
+        if (m_flip < 1.0) return true;
+        m_flip = 0;
+        turn(down ? +1 : -1, !down);
+        return true;
+    }, false);
+    cw->add_controller(edge);
 }
 
 DocView::~DocView() {
@@ -230,19 +252,37 @@ int DocView::count() const { return m_doc ? m_doc->count() : 0; }
 void DocView::set_document(std::shared_ptr<Document> doc) {
     m_doc = std::move(doc);
     m_cache.clear();
+    m_hits.clear();
+    m_hit = -1;
     m_sizes.clear();
     if (m_doc)
         for (int i = 0; i < m_doc->count(); ++i) m_sizes.push_back(m_doc->size(i));
     // Paper fits the width; a picture fits the window but is never blown up
     // past 100% by a fit (relayout).
     m_page = m_doc ? 0 : -1;
-    m_fit = m_doc && m_doc->kind() == core::Kind::Image ? Fit::Page : Fit::Width;
+    // Paged: the page fitted to the window (Scott, s005). Continuous: width.
+    m_fit = m_paged || (m_doc && m_doc->kind() == core::Kind::Image) ? Fit::Page : Fit::Width;
     relayout();
     gtk_adjustment_set_value(canvas(m_canvas)->vadj, 0);
     gtk_adjustment_set_value(canvas(m_canvas)->hadj, 0);
     gtk_widget_queue_draw(m_canvas);
     gtk_widget_grab_focus(m_canvas);
     update_page();
+    m_changed.emit();
+}
+
+void DocView::refresh(std::shared_ptr<Document> doc, int page) {
+    m_doc = std::move(doc);
+    m_cache.clear();
+    m_hits.clear();
+    m_hit = -1;
+    m_sizes.clear();
+    if (m_doc)
+        for (int i = 0; i < m_doc->count(); ++i) m_sizes.push_back(m_doc->size(i));
+    m_page = m_doc ? std::clamp(page, 0, std::max(0, m_doc->count() - 1)) : -1;
+    relayout();
+    if (m_doc) go_to(m_page);
+    gtk_widget_queue_draw(m_canvas);
     m_changed.emit();
 }
 
@@ -264,7 +304,8 @@ void DocView::relayout() {
             if (m_doc->kind() == core::Kind::Image) m_scale = std::min(m_scale, 1.0);
         }
     }
-    m_placed = L::place(m_sizes, m_scale, m_vw, m_mode);
+    m_placed = m_paged ? L::place_row(m_sizes, std::max(m_page, 0), m_scale, m_vw, m_vh, m_mode)
+                       : L::place(m_sizes, m_scale, m_vw, m_mode);
     configure_adjustments();
 }
 
@@ -318,6 +359,18 @@ void DocView::fit_page() {
 void DocView::go_to(int page) {
     if (!m_doc || m_placed.pages.empty()) return;
     page = std::clamp(page, 0, int(m_placed.pages.size()) - 1);
+    if (m_paged) {
+        // Show that page's row alone; the zoom (or the fit) carries over.
+        m_page = L::first_of_row(L::row_of(page, m_mode), m_mode);
+        relayout();
+        gtk_adjustment_set_value(canvas(m_canvas)->vadj, 0);
+        auto* h = canvas(m_canvas)->hadj;
+        gtk_adjustment_set_value(h, (gtk_adjustment_get_upper(h) - gtk_adjustment_get_page_size(h)) / 2);
+        m_flip = 0;
+        gtk_widget_queue_draw(m_canvas);
+        m_changed.emit();
+        return;
+    }
     // The row's top: in a spread the taller page sets it.
     Rect_ r = m_placed.pages[std::size_t(page)];
     for (const int other : {page - 1, page + 1})
@@ -339,6 +392,38 @@ void DocView::go_to(int page) {
 void DocView::next_page() { go_to(L::step(m_page, +1, count(), m_mode)); }
 void DocView::prev_page() { go_to(L::step(m_page, -1, count(), m_mode)); }
 
+void DocView::set_paged(bool on) {
+    if (on == m_paged) return;
+    const int keep = std::max(m_page, 0);
+    m_paged = on;
+    if (m_fit != Fit::None) m_fit = on ? Fit::Page : Fit::Width;
+    relayout();
+    if (m_doc) go_to(keep);
+    gtk_widget_queue_draw(m_canvas);
+    m_changed.emit();
+}
+
+bool DocView::at_top() const {
+    return gtk_adjustment_get_value(canvas(m_canvas)->vadj) <= 0.5;
+}
+
+bool DocView::at_bottom() const {
+    auto* v = canvas(m_canvas)->vadj;
+    return gtk_adjustment_get_value(v) + gtk_adjustment_get_page_size(v) >= gtk_adjustment_get_upper(v) - 0.5;
+}
+
+// Paged: to the next / previous row. Going back lands at the bottom of the
+// earlier page (you were reading down into this one), forward at the top.
+void DocView::turn(int dir, bool to_end) {
+    const int target = L::step(m_page, dir, count(), m_mode);
+    if (target == m_page) return;
+    go_to(target);
+    if (to_end) {
+        auto* v = canvas(m_canvas)->vadj;
+        gtk_adjustment_set_value(v, gtk_adjustment_get_upper(v));
+    }
+}
+
 void DocView::set_book(bool on) {
     const auto mode = on ? L::Mode::Book : L::Mode::Continuous;
     if (mode == m_mode) return;
@@ -354,6 +439,7 @@ void DocView::canvas_scrolled() { update_page(); }
 
 void DocView::update_page() {
     if (!m_doc) { m_page = -1; return; }
+    if (m_paged) return;   // scrolling within a page never changes which page it is
     const double mid = gtk_adjustment_get_value(canvas(m_canvas)->vadj) + m_vh / 2.0;
     const int p = L::page_at(m_placed, mid);
     if (p != m_page) {
@@ -363,23 +449,30 @@ void DocView::update_page() {
 }
 
 Glib::RefPtr<Gdk::Texture> DocView::render_page(int i, double s) {
-    const auto& sz = m_sizes[std::size_t(i)];
-    double rs = s;
-    if (sz.w * sz.h * rs * rs > kMaxPixels) rs = std::sqrt(kMaxPixels / (sz.w * sz.h));
-    const int w = std::max(1, int(std::ceil(sz.w * rs)));
-    const int h = std::max(1, int(std::ceil(sz.h * rs)));
-    cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t* cr = cairo_create(surf);
-    m_doc->render(cr, i, rs);
-    cairo_destroy(cr);
-    cairo_surface_flush(surf);
-    const int stride = cairo_image_surface_get_stride(surf);
-    GBytes* bytes = g_bytes_new(cairo_image_surface_get_data(surf), std::size_t(stride) * std::size_t(h));
-    cairo_surface_destroy(surf);
-    // GDK_MEMORY_DEFAULT is premultiplied BGRA (little-endian) -- Cairo's ARGB32.
-    GdkTexture* t = gdk_memory_texture_new(w, h, GDK_MEMORY_DEFAULT, bytes, std::size_t(stride));
-    g_bytes_unref(bytes);
-    return Glib::wrap(t);
+    return render_texture(*m_doc, i, s, kMaxPixels);
+}
+
+void DocView::set_hits(std::vector<core::search::Hit> hits) {
+    m_hits = std::move(hits);
+    if (m_hit >= int(m_hits.size())) m_hit = -1;
+    gtk_widget_queue_draw(m_canvas);
+}
+
+void DocView::show_hit(int index) {
+    m_hit = index;
+    if (m_doc && index >= 0 && index < int(m_hits.size())) {
+        const auto& h = m_hits[std::size_t(index)];
+        if (m_paged && L::row_of(h.page, m_mode) != L::row_of(m_page, m_mode)) go_to(h.page);
+        const auto& pr = m_placed.pages[std::size_t(h.page)];
+        const double x = pr.x + h.r.x * m_scale, y = pr.y + h.r.y * m_scale;
+        const double w = h.r.w * m_scale, hh = h.r.h * m_scale;
+        auto* c = canvas(m_canvas);
+        gtk_adjustment_set_value(c->vadj, y + hh / 2 - m_vh / 2.0);
+        const double ox = gtk_adjustment_get_value(c->hadj);
+        if (x < ox || x + w > ox + m_vw) gtk_adjustment_set_value(c->hadj, x + w / 2 - m_vw / 2.0);
+        update_page();
+    }
+    gtk_widget_queue_draw(m_canvas);
 }
 
 void DocView::evict(int first, int last) {
@@ -421,6 +514,18 @@ void DocView::canvas_snapshot(GtkSnapshot* s, int w, int h) {
             it = m_cache.find(i);
         }
         gtk_snapshot_append_texture(s, it->second.tex->gobj(), &box);
+
+        // Search hits on this page: all tinted, the current one stronger.
+        auto lo = std::lower_bound(m_hits.begin(), m_hits.end(), i,
+                                   [](const core::search::Hit& h, int p) { return h.page < p; });
+        for (auto hit = lo; hit != m_hits.end() && hit->page == i; ++hit) {
+            const bool cur = int(hit - m_hits.begin()) == m_hit;
+            const GdkRGBA tint = cur ? GdkRGBA{1.0f, 0.55f, 0.10f, 0.55f} : GdkRGBA{1.0f, 0.85f, 0.20f, 0.38f};
+            graphene_rect_t hr = GRAPHENE_RECT_INIT(
+                float(r.x - ox + (hit->r.x - 1) * m_scale), float(r.y - oy + (hit->r.y - 1) * m_scale),
+                float((hit->r.w + 2) * m_scale), float((hit->r.h + 2) * m_scale));
+            gtk_snapshot_append_color(s, &tint, &hr);
+        }
     }
     gtk_snapshot_pop(s);
     evict(first, last);

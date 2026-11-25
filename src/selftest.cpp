@@ -20,6 +20,8 @@
 #include "core/TileText.hpp"
 #include "core/Layout.hpp"
 #include "core/FileKind.hpp"
+#include "core/Search.hpp"
+#include "core/Pages.hpp"
 #include <cmath>
 
 #include <algorithm>
@@ -556,6 +558,129 @@ int main() {
             check("book: page_at finds the taller page when the y misses the shorter one",
                   L::page_at(q, q.pages[1].y + 20) == 1);
         }
+    }
+
+
+
+    // ── Lookit: paged view -- one page (or facing pair) at a time ───────────
+    {
+        namespace L = core::layout;
+        using M = L::Mode;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+        const std::vector<L::Size> pg(6, L::Size{600, 800});
+        auto p = L::place_row(pg, 2, 0.5, 1000, 700);
+        check("paged: only the current page is placed",
+              near(p.pages[2].w, 300) && near(p.pages[0].h, 0) && near(p.pages[3].h, 0));
+        check("paged: a page that fits is centred both ways",
+              near(p.pages[2].x, std::floor((1000 - 300) / 2.0)) && near(p.pages[2].y, std::floor((700 - 400) / 2.0)));
+        check("paged: the content is exactly the viewport when it fits", near(p.width, 1000) && near(p.height, 700));
+        auto v = L::visible(p, 0, 700);
+        check("paged: visible() sees just that page", v.first == 2 && v.second == 2);
+        auto z = L::place_row(pg, 2, 2.0, 1000, 700);
+        check("paged: zoomed past the view, it starts at the margin and scrolls",
+              near(z.pages[2].y, L::kMargin) && near(z.height, 1600 + 2 * L::kMargin));
+        auto b = L::place_row(pg, 4, 0.5, 1000, 700, M::Book);
+        check("paged book: the facing pair 3|4 (pages 4|5) together",
+              near(b.pages[3].h, 400) && near(b.pages[4].h, 400) && near(b.pages[3].y, b.pages[4].y) &&
+              near(b.pages[2].h, 0) && near(b.pages[5].h, 0));
+        auto c = L::place_row(pg, 0, 0.5, 1000, 700, M::Book);
+        check("paged book: the cover alone, right of the spine",
+              near(c.pages[0].x, std::floor(c.width / 2) + L::kSpine / 2) && near(c.pages[1].h, 0));
+        check("paged: fit page of a facing pair fits the pair",
+              near(L::fit_page(pg, 3, 1250, 900, M::Book), std::min((1250 - 2 * L::kMargin - L::kSpine) / 1200.0,
+                                                                   (900 - 2 * L::kMargin) / 800.0)));
+        check("paged: an empty doc places nothing", L::place_row({}, 0, 1, 800, 600).pages.empty());
+    }
+
+    // ── Lookit: find-in-document ────────────────────────────────────────────
+    {
+        namespace S = core::search;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+        auto r = S::from_pdf(100, 700, 160, 712, 792);
+        check("search: poppler's bottom-left rect -> top-left", near(r.x, 100) && near(r.y, 80) &&
+                                                                 near(r.w, 60) && near(r.h, 12));
+        auto r2 = S::from_pdf(160, 712, 100, 700, 792);
+        check("search: corners in either order", near(r2.x, 100) && near(r2.y, 80));
+        std::vector<S::Hit> h{{2, {50, 100, 10, 12}}, {0, {300, 40, 10, 12}}, {0, {20, 41, 10, 12}},
+                              {0, {20, 400, 10, 12}}};
+        S::sort(h);
+        check("search: page order, then lines, then left to right",
+              h[0].page == 0 && near(h[0].r.x, 20) && near(h[1].r.x, 300) && near(h[2].r.y, 400) &&
+              h[3].page == 2);
+        check("search: step wraps both ways", S::step(h, 3, +1) == 0 && S::step(h, 0, -1) == 3 &&
+                                              S::step(h, 1, +1) == 2);
+        check("search: step from no current starts at an end", S::step(h, -1, +1) == 0 && S::step(h, -1, -1) == 3);
+        check("search: no hits, nowhere to go", S::step({}, 0, +1) == -1 && S::first_from({}, 3) == -1);
+        check("search: first hit from the page you're on", S::first_from(h, 1) == 3 && S::first_from(h, 0) == 0);
+        check("search: past the last hit wraps to the first", S::first_from(h, 5) == 0);
+    }
+
+
+    // ── Lookit: page tools -- the edited page list, through the one door ────
+    {
+        using core::Pages;
+        namespace P = core::pages;
+        Pages pg;
+        core::PageJournal j{pg};
+        pg.set_door([&] { return j.open(); });
+        pg.load("/a.pdf", 5);
+        auto order = [&] {
+            std::string o;
+            for (const auto& r : pg.records()) o += std::to_string(r.src) + ":" + std::to_string(r.index + 1) +
+                                                     (r.turn ? "^" + std::to_string(r.turn) : "") + " ";
+            return o;
+        };
+        check("pages: a load is pages 1..5, no undo step", order() == "0:1 0:2 0:3 0:4 0:5 " && !j.can_undo());
+        check("pages: rotate right", P::rotate(j, pg, {pg.id_at(1)}, 1) && order() == "0:1 0:2^1 0:3 0:4 0:5 ");
+        check("pages: rotate left wraps to three quarters",
+              P::rotate(j, pg, {pg.id_at(0)}, -1) && order() == "0:1^3 0:2^1 0:3 0:4 0:5 ");
+        check("pages: rotate by 0 is not a step", !P::rotate(j, pg, {pg.id_at(0)}, 4));
+        check("pages: undo the rotation", j.undo().done && order() == "0:1 0:2^1 0:3 0:4 0:5 ");
+        check("pages: redo it", j.redo().done && order() == "0:1^3 0:2^1 0:3 0:4 0:5 ");
+        check("pages: move page 5 to the front", P::move(j, pg, {pg.id_at(4)}, 0) && order() == "0:5 0:1^3 0:2^1 0:3 0:4 ");
+        check("pages: move two pages to the end",
+              P::move(j, pg, {pg.id_at(0), pg.id_at(1)}, 5) && order() == "0:2^1 0:3 0:4 0:5 0:1^3 ");
+        check("pages: a move to where it is is not a step", !P::move(j, pg, {pg.id_at(0)}, 0));
+        check("pages: delete page 2", P::remove(j, pg, {pg.id_at(1)}) && pg.count() == 4 &&
+                                       order() == "0:2^1 0:4 0:5 0:1^3 ");
+        check("pages: never delete every page", !P::remove(j, pg, pg.ids()) && pg.count() == 4);
+        check("pages: undo the delete puts it back in its place",
+              j.undo().done && order() == "0:2^1 0:3 0:4 0:5 0:1^3 ");
+        const int b = pg.add_source("/b.pdf");
+        auto made = P::insert(j, pg, b, 2, 1, "b.pdf");
+        check("pages: insert 2 pages of b.pdf after page 1",
+              made.size() == 2 && order() == "0:2^1 1:1 1:2 0:3 0:4 0:5 0:1^3 ");
+        check("pages: undo the insert", j.undo().done && pg.count() == 5);
+        check("pages: redo the insert", j.redo().done && pg.count() == 7 && order() == "0:2^1 1:1 1:2 0:3 0:4 0:5 0:1^3 ");
+        check("pages: duplicate a page lands right after it",
+              P::duplicate(j, pg, pg.id_at(0)) && order() == "0:2^1 0:2^1 1:1 1:2 0:3 0:4 0:5 0:1^3 ");
+        check("pages: undo says what it undoes", j.undo_label() == "Duplicate page");
+        check("pages: THE GATE -- no write went around the journal", pg.strays() == 0);
+        pg.put(pg.id_at(0), std::nullopt);
+        check("pages: the gate catches a write outside the door", pg.strays() == 1);
+
+        std::string err;
+        auto r = P::parse_ranges("3-5, 1, 9-", 10, err);
+        check("ranges: 3-5, 1, 9-", err.empty() && r == std::vector<int>{2, 3, 4, 0, 8, 9});
+        check("ranges: repeats once, reverse ranges allowed",
+              P::parse_ranges("2,2,4-3", 5, err) == std::vector<int>{1, 3, 2});
+        check("ranges: -3 means 1-3", P::parse_ranges("-3", 5, err) == std::vector<int>{0, 1, 2});
+        check("ranges: out of range is refused with a reason", P::parse_ranges("7", 5, err).empty() && !err.empty());
+        check("ranges: junk is refused", P::parse_ranges("x", 5, err).empty() && !err.empty());
+        check("ranges: empty is empty, no error", P::parse_ranges(" ", 5, err).empty() && err.empty());
+    }
+    {
+        namespace S = core::search;
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-6; };
+        const core::layout::Rect r{10, 20, 30, 5};   // on a 100 x 200 page
+        auto t1 = S::turn_rect(r, 100, 200, 1);
+        check("search: a hit on a page turned right", near(t1.x, 175) && near(t1.y, 10) && near(t1.w, 5) && near(t1.h, 30));
+        auto t2 = S::turn_rect(r, 100, 200, 2);
+        check("search: ... turned over", near(t2.x, 60) && near(t2.y, 175));
+        auto t3 = S::turn_rect(r, 100, 200, 3);
+        check("search: ... turned left", near(t3.x, 20) && near(t3.y, 60) && near(t3.w, 5));
+        auto t4 = S::turn_rect(r, 100, 200, 4);
+        check("search: four turns is none", near(t4.x, 10) && near(t4.y, 20));
     }
 
     // ── Lookit: what a file is ──────────────────────────────────────────────

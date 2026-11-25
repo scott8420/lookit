@@ -12,6 +12,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKMM REQUIRED gtkmm-4.0)
 # PDFs: poppler-glib (Fedora: poppler-glib-devel; Ubuntu: libpoppler-glib-dev).
 pkg_check_modules(POPPLER REQUIRED poppler-glib)
+# Saving edited PDFs: qpdf (Fedora: qpdf-devel; Ubuntu: libqpdf-dev).
+pkg_check_modules(QPDF REQUIRED libqpdf)
 find_package(spdlog REQUIRED)
 
 # ── lookit_core -- the GTK-free core (the model side of the one real seam) ──────
@@ -37,6 +39,8 @@ add_library(lookit_core STATIC
     # Lookit: where pages sit + the zoom ladder; what a file is.
     src/core/Layout.cpp
     src/core/FileKind.cpp
+    src/core/Search.cpp
+    src/core/Pages.cpp
 )
 target_include_directories(lookit_core PUBLIC include)
 # Vendored nlohmann/json (header-only, MIT), PRIVATE -- an implementation detail
@@ -85,17 +89,35 @@ add_executable(lookit
     src/Appearance.cpp
     src/Document.cpp
     src/DocView.cpp
+    src/ThumbStrip.cpp
+    src/Save.cpp
     src/Shell.cpp
     src/Shell_zones.cpp
     src/Shell_bindings.cpp
     src/Shell_handlers.cpp
     src/Shell_helpers.cpp
+    src/Shell_edit.cpp
     src/AboutWindow.cpp
     src/ShortcutsDialog.cpp
     src/Registry.cpp
     src/Log.cpp
 )
-target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS})
-target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} lookit_core spdlog::spdlog)
-target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS})
+target_include_directories(lookit PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS} ${QPDF_INCLUDE_DIRS})
+target_link_libraries(lookit     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} ${QPDF_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS} ${QPDF_LIBRARY_DIRS})
 target_compile_options(lookit    PRIVATE ${GTKMM_CFLAGS_OTHER})
+
+# ── lookit-peek -- the spacebar quick look for Files (s005) ─────────────────────
+# Its own small program: it owns org.gnome.NautilusPreviewer (Sushi's name) and
+# answers Nautilus's org.gnome.NautilusPreviewer2 calls. Shares the page view,
+# the documents and the skin with Lookit. See src/peek/main.cpp.
+add_executable(lookit-peek
+    src/peek/main.cpp
+    src/Document.cpp
+    src/DocView.cpp
+    src/Log.cpp
+)
+target_include_directories(lookit-peek PRIVATE include ${GTKMM_INCLUDE_DIRS} ${POPPLER_INCLUDE_DIRS})
+target_link_libraries(lookit-peek     PRIVATE ${GTKMM_LIBRARIES} ${POPPLER_LIBRARIES} lookit_core spdlog::spdlog)
+target_link_directories(lookit-peek   PRIVATE ${GTKMM_LIBRARY_DIRS} ${POPPLER_LIBRARY_DIRS})
+target_compile_options(lookit-peek    PRIVATE ${GTKMM_CFLAGS_OTHER})

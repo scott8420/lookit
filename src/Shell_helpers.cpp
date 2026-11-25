@@ -98,9 +98,15 @@ void Shell::sync_view_bar() {  // helper: name, zoom, page, fit toggles
         m_page_entry.set_text(has ? std::to_string(m_doc_view.page() + 1) : "");
     m_page_of.set_text(has ? "of " + std::to_string(n) : "");
     m_pages_group.set_visible(n > 1);   // a picture has no pages to step through
+    bool thumbs_on = true;
+    if (m_act_thumbs) m_act_thumbs->get_state(thumbs_on);
+    m_thumbs.set_visible(has && n > 1 && thumbs_on);
+    if (has) m_thumbs.set_current(m_doc_view.page());
+    if (m_act_find) m_act_find->set_enabled(has && doc->kind() == core::Kind::Pdf);
     m_fit_width.set_active(has && m_doc_view.fit() == DocView::Fit::Width);
     m_fit_page.set_active(has && m_doc_view.fit() == DocView::Fit::Page);
-    for (auto& a : {m_act_zoom_in, m_act_zoom_out, m_act_zoom_actual, m_act_fit_width, m_act_fit_page, m_act_book})
+    for (auto& a : {m_act_zoom_in, m_act_zoom_out, m_act_zoom_actual, m_act_fit_width, m_act_fit_page, m_act_book,
+                    m_act_continuous})
         if (a) a->set_enabled(has);
     m_bar.set_sensitive(has);
     m_syncing = false;
@@ -115,6 +121,61 @@ void Shell::show_toast(const std::string& text, bool error) {  // helper
     m_toast_timer.disconnect();
     m_toast_timer = Glib::signal_timeout().connect_seconds(
         [this] { m_toast.set_reveal_child(false); return false; }, 5);
+}
+
+// ── Find: page by page on idle, so a long PDF never freezes the window ──────
+// Hits appear (and are tinted) as their pages are searched; when the search
+// reaches the end, the first hit on or after the page you're on becomes
+// current -- unless you already stepped to one.
+void Shell::start_search(const std::string& text) {  // helper: (re)start
+    m_find_idle.disconnect();
+    m_find_text = text;
+    m_hits.clear();
+    m_hit = -1;
+    m_find_page = 0;
+    m_doc_view.set_hits({});
+    if (!text.empty() && m_doc_view.document())
+        m_find_idle = Glib::signal_idle().connect(sigc::mem_fun(*this, &Shell::search_some));
+    sync_search_label();
+}
+
+bool Shell::search_some() {  // helper: one idle slice; false = done
+    const auto& doc = m_doc_view.document();
+    if (!doc || m_find_text.empty()) return false;
+    const int n = doc->count();
+    const auto t0 = g_get_monotonic_time();
+    bool grew = false;
+    // ~12 ms of searching per slice, then let the window breathe.
+    while (m_find_page < n && g_get_monotonic_time() - t0 < 12000) {
+        auto found = doc->find(m_find_page++, m_find_text);
+        grew = grew || !found.empty();
+        m_hits.insert(m_hits.end(), found.begin(), found.end());
+    }
+    if (grew) m_doc_view.set_hits(m_hits);
+    const bool done = m_find_page >= n;
+    if (done && m_hit < 0 && !m_hits.empty()) {
+        m_hit = core::search::first_from(m_hits, std::max(0, m_doc_view.page()));
+        m_doc_view.show_hit(m_hit);
+    }
+    sync_search_label();
+    if (done)
+        if (auto lg = log::get(log::Area::Shell))
+            lg->info("find \"{}\": {} hit(s) in {} page(s)", m_find_text, m_hits.size(), n);
+    return !done;
+}
+
+void Shell::sync_search_label() {  // helper: "3 of 17", "searching..."
+    const auto& doc = m_doc_view.document();
+    std::string t;
+    if (m_find_text.empty()) t = "";
+    else if (doc && m_find_page < doc->count())
+        t = std::to_string(m_hits.size()) + " so far…";
+    else if (m_hits.empty())
+        t = doc && doc->kind() != core::Kind::Pdf ? "no text here" : "no matches";
+    else
+        t = (m_hit >= 0 ? std::to_string(m_hit + 1) + " of " : "") + std::to_string(m_hits.size()) +
+            (m_hit >= 0 ? "" : " matches");
+    m_find_count.set_text(t);
 }
 
 void Shell::go(const std::string& page) {  // helper: show a page
