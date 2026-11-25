@@ -38,6 +38,12 @@ void Shell::build_shell() {  // zone: window, header, sidebar, overlay
     side->set_tooltip_text("Sidebar (F8)");
     side->set_action_name("win.sidebar");
     header->pack_start(*side);
+    // s015.1: and the thumbnail strip's, beside it (was in the view bar).
+    auto* thumbs = Gtk::make_managed<Gtk::ToggleButton>();
+    thumbs->set_icon_name("view-grid-symbolic");
+    thumbs->set_tooltip_text("Thumbnails (Ctrl+T)");
+    thumbs->set_action_name("win.thumbs");
+    header->pack_start(*thumbs);
 
     auto* open = Gtk::make_managed<Gtk::Button>();
     open->set_icon_name("document-open-symbolic");
@@ -256,13 +262,7 @@ void Shell::build_view() {  // zone: the toolbar + DocView
     m_book.set_action_name("win.book");
     m_bar.append(m_book);
     m_bar.append(*Gtk::make_managed<Gtk::Separator>(Gtk::Orientation::VERTICAL));
-    {
-        auto thumbs = Gtk::make_managed<Gtk::ToggleButton>();
-        thumbs->set_icon_name("view-paged-symbolic");
-        thumbs->set_tooltip_text("Thumbnails (Ctrl+T)");
-        thumbs->set_action_name("win.thumbs");
-        m_bar.prepend(*thumbs);
-    }
+    // (s015.1: the thumbnails toggle moved up to the header, by the sidebar's.)
     m_bar.append(*icon_button("system-search-symbolic", "Find (Ctrl+F)", "win.find"));
     m_bar.append(*icon_button("dialog-information-symbolic", "Info (Shift+F9)", "win.toggle-right-drawer"));
 

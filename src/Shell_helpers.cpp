@@ -104,6 +104,7 @@ void Shell::sync_view_bar() {  // helper: name, zoom, page, fit toggles
     bool thumbs_on = true;
     if (m_act_thumbs) m_act_thumbs->get_state(thumbs_on);
     m_thumbs.set_visible(has && n > 1 && thumbs_on);
+    if (m_act_thumbs) m_act_thumbs->set_enabled(has && n > 1);   // s015.1: grey with nothing to show
     if (has) m_thumbs.set_current(m_doc_view.page());
     if (m_act_find) m_act_find->set_enabled(has && doc->searchable());
     m_fit_width.set_active(has && m_doc_view.fit() == DocView::Fit::Width);
